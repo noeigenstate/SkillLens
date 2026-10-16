@@ -47,3 +47,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Promo video music
+
+`docs/promo.mp4` uses 30 seconds of "Cybershaman" by Ruskerdax, published on OpenGameArt (https://opengameart.org/content/cybershaman) under CC0 1.0 (public domain dedication). No attribution is required; it is credited here anyway.

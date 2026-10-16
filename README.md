@@ -17,7 +17,9 @@ Drop in an agent skill and watch its workflow come alive: steps, decisions and l
 
 <br>
 
-<img src="docs/demo.gif" width="880" alt="SkillLens playing the review-loop example in the Blueprint theme">
+<a href="docs/promo.mp4"><img src="docs/promo.webp" width="880" alt="SkillLens promo: turn any SKILL.md into an animated flowchart"></a>
+
+<sub>▶ <a href="docs/promo.mp4">Watch the 30-second video with sound</a> (MP4, 1080p)</sub>
 
 </div>
 
@@ -62,7 +64,7 @@ cd SkillLens
 npm start
 ```
 
-On Windows you can double-click **`start.bat`** instead (`启动.bat` opens the Chinese UI). There is nothing to install: SkillLens has no dependencies. Your browser opens with every skill it found.
+On Windows you can double-click **`start.bat`** instead. Switch the UI to Chinese with the **中** button in the top bar; the choice is remembered. There is nothing to install: SkillLens has no dependencies. Your browser opens with every skill it found.
 
 Prefer no server? Run `npm run scan` once, then open `index.html` directly.
 
@@ -141,12 +143,12 @@ src/              parsing, extraction, layout, rendering, UI, strings (en / zh)
 scripts/          scan, local server, video recording (no third-party packages)
 skills/skilllens  the guide for using and changing SkillLens
 examples/         example skills
-docs/             logo, screenshots and the demo GIF
+docs/             logo, screenshots and the promo video
 ```
 
 ## Credits
 
-The visual grammar follows the loop view of [live-panel-skill](https://github.com/ythx-101/live-panel-skill). Icons by [Lucide](https://lucide.dev) (ISC); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The visual grammar follows the loop view of [live-panel-skill](https://github.com/ythx-101/live-panel-skill). Icons by [Lucide](https://lucide.dev) (ISC); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Music in the promo video: "[Cybershaman](https://opengameart.org/content/cybershaman)" by Ruskerdax (CC0).
 
 ## License
 

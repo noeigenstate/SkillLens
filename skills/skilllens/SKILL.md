@@ -54,7 +54,7 @@ flow:
 
 ## Open it
 
-- **Double-click `start.bat`** (`启动.bat` opens the Chinese UI): starts a local server and opens the browser. The list holds the repo's `skills/` and `examples/` plus the local Claude user and plugin skills, and redraws within 2 seconds after a SKILL.md changes. Same as `npm start`; `npm run start:project` lists only the repo's own skills.
+- **Double-click `start.bat`**: starts a local server and opens the browser. The list holds the repo's `skills/` and `examples/` plus the local Claude user and plugin skills, and redraws within 2 seconds after a SKILL.md changes. Same as `npm start`; `npm run start:project` lists only the repo's own skills.
 - **Open `index.html` directly**: no server, but the list comes from `data/skills.js`, so run `npm run scan` first. Video recording and auto-translation need the server.
 - Extra folders: `--root Name=<path>`, or a `skillviz.config.json` in the repo root: `{"roots":[{"label":"Team skills","dir":"<path>"}]}`.
 
@@ -95,3 +95,4 @@ Without `flow:`, the cards of non-ref lanes are chained in order. Icons are [Luc
 - Auto-translation: `scripts/lib/translate.mjs` (server, `/api/translate`) and `useTranslation` in `src/app.js` (which strings on the chart get translated). Only chart text and opened source text are translated; tags, file names, paths and Yes / No are kept. Backend order: the Anthropic SDK when an API key is set and `@anthropic-ai/sdk` is installed, else the local Claude Code CLI (on Windows call `node_modules/@anthropic-ai/claude-code/bin/claude.exe` directly to avoid `.cmd` quoting). The cache key is `lang + \u0001 + text` on both sides.
 - Check changes in a headless browser: `npm run scan`, then `node scripts/record.mjs <skill> --seconds 3`, or screenshot through `scripts/lib/cdp.mjs`. For a regression run, push every skill through `SV.extract` → `SV.layout` → `SV.render.toSVG` and make sure nothing throws and no text overflows its card.
 - Recording needs a local Chrome / Edge and ffmpeg; set `SV_CHROME` / `SV_FFMPEG` if they are not found.
+- README hero media: `docs/promo.webp` (the animation shown inline) links to `docs/promo.mp4` (the full video with sound; GitHub cannot play a repo MP4 inline). Use animated WebP, not GIF: on the dark Blueprint gradients a 30 s GIF is over 20 MB, while WebP stays under 8 MB with cleaner color. From a 1080p master: `ffmpeg -i master.mp4 -vf "fps=15,scale=960:-1:flags=lanczos" -c:v libwebp -quality 70 -compression_level 6 -loop 0 -an docs/promo.webp` and `ffmpeg -i master.mp4 -c:v libx264 -preset slow -crf 21 -pix_fmt yuv420p -c:a copy -movflags +faststart docs/promo.mp4`.

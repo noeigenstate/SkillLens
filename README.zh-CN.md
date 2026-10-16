@@ -17,7 +17,9 @@
 
 <br>
 
-<img src="docs/screenshot-zh.png" width="880" alt="SkillLens 中文界面">
+<a href="docs/promo.mp4"><img src="docs/promo.webp" width="880" alt="SkillLens 宣传片：把任意 SKILL.md 变成动态流程图"></a>
+
+<sub>▶ <a href="docs/promo.mp4">观看带声音的 30 秒宣传片</a>（MP4，1080p）</sub>
 
 </div>
 
@@ -52,6 +54,10 @@ skill 是一份很长的 Markdown。工作流就写在里面，但要一行行�
   </tr>
 </table>
 
+中文界面下，图里的步骤也会自动翻译成中文：
+
+<img src="docs/screenshot-zh.png" width="880" alt="SkillLens 中文界面">
+
 ## 快速开始
 
 需要 [Node.js](https://nodejs.org) 22 或更新版本；导出视频还需要 Chrome 或 Edge，以及 [ffmpeg](https://ffmpeg.org)。
@@ -62,7 +68,7 @@ cd SkillLens
 npm start -- --lang zh
 ```
 
-Windows 上直接双击 **`启动.bat`**（中文界面）或 `start.bat`（英文界面）。不需要安装任何依赖。浏览器会自动打开，列出找到的所有 skill。
+Windows 上直接双击 **`start.bat`**。界面默认英文，点顶栏的 **中** 按钮切到中文，之后会一直记住。不需要安装任何依赖。浏览器会自动打开，列出找到的所有 skill。
 
 不想起服务：先运行一次 `npm run scan`，再直接双击 `index.html`。
 
@@ -116,7 +122,7 @@ flowchart LR
 
 ## 致谢
 
-视觉语法参考 [live-panel-skill](https://github.com/ythx-101/live-panel-skill) 的 loop 视图。图标来自 [Lucide](https://lucide.dev)（ISC），见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+视觉语法参考 [live-panel-skill](https://github.com/ythx-101/live-panel-skill) 的 loop 视图。图标来自 [Lucide](https://lucide.dev)（ISC），见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。宣传片配乐：Ruskerdax 的《[Cybershaman](https://opengameart.org/content/cybershaman)》（CC0）。
 
 ## 许可证
 
