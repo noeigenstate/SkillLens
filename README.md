@@ -17,9 +17,9 @@ Drop in an agent skill and watch its workflow come alive: steps, decisions and l
 
 <br>
 
-<a href="docs/promo.mp4"><img src="docs/promo.webp" width="880" alt="SkillLens promo: turn any SKILL.md into an animated flowchart"></a>
+<a href="https://github.com/noeigenstate/SkillLens/raw/main/docs/promo.mp4"><img src="docs/promo.webp" width="880" alt="SkillLens promo: turn any SKILL.md into an animated flowchart"></a>
 
-<sub>▶ <a href="docs/promo.mp4">Watch the 30-second video with sound</a> (MP4, 1080p)</sub>
+<sub>▶ <a href="https://github.com/noeigenstate/SkillLens/raw/main/docs/promo.mp4">Download the 30-second video with sound</a> (MP4 · 1080p · 8 MB)</sub>
 
 </div>
 

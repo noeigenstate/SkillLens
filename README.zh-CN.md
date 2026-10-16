@@ -17,9 +17,9 @@
 
 <br>
 
-<a href="docs/promo.mp4"><img src="docs/promo.webp" width="880" alt="SkillLens 宣传片：把任意 SKILL.md 变成动态流程图"></a>
+<a href="https://github.com/noeigenstate/SkillLens/raw/main/docs/promo.mp4"><img src="docs/promo.webp" width="880" alt="SkillLens 宣传片：把任意 SKILL.md 变成动态流程图"></a>
 
-<sub>▶ <a href="docs/promo.mp4">观看带声音的 30 秒宣传片</a>（MP4，1080p）</sub>
+<sub>▶ <a href="https://github.com/noeigenstate/SkillLens/raw/main/docs/promo.mp4">下载带声音的 30 秒宣传片</a>（MP4 · 1080p · 8 MB）</sub>
 
 </div>
 
