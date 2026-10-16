@@ -1,0 +1,6 @@
+# Local scan results hold the full text of the skills on this machine; recordings stay local too
+data/
+output/
+node_modules/
+# Reference material, not part of the project
+reference.mp4

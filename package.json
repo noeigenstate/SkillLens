@@ -1,0 +1,20 @@
+{
+  "name": "skill-lens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把任意 SKILL.md 变成动态流程图：自动提取步骤、判断和回环，可浏览、微调、导出网页和视频",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "0.131.0"
+  },
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "start:project": "node scripts/serve.mjs --no-claude",
+    "scan": "node scripts/scan.mjs",
+    "scan:project": "node scripts/scan.mjs --no-claude",
+    "record": "node scripts/record.mjs"
+  }
+}

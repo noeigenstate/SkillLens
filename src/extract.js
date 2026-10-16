@@ -1,0 +1,457 @@
+/* SKILL.md → 流程图规格（spec）。有 ```skillflow 块就按块来，否则启发式提取 */
+SV.mod.extract = function (SV) {
+  const md = SV.md;
+  const CJK = /[⺀-鿿豈-﫿　-〿＀-￯]/;
+
+  const units = s => { let u = 0; for (const ch of String(s)) u += CJK.test(ch) ? 2 : 1; return u; };
+  const cjkRatio = s => {
+    const t = String(s).replace(/[\s\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\x7f]/g, '');
+    if (!t) return 0;
+    let n = 0;
+    for (const ch of t) if (CJK.test(ch)) n++;
+    return n / t.length;
+  };
+
+  /* 按显示宽度截断，拉丁文尽量停在词边界 */
+  function cut(s, max) {
+    s = String(s || '').trim();
+    if (units(s) <= max) return s;
+    let u = 0, out = '';
+    for (const ch of s) {
+      const w = CJK.test(ch) ? 2 : 1;
+      if (u + w > max - 1) break;
+      out += ch;
+      u += w;
+    }
+    if (!CJK.test(out.slice(-1))) {
+      const m = out.match(/^(.*\S)\s+\S*$/);
+      if (m && units(m[1]) > max * 0.55) out = m[1];
+    }
+    return out.replace(/[\s,，、;；:：(（\[\-–—/]+$/, '') + '…';
+  }
+
+  const firstSentence = s => {
+    const m = String(s || '').match(/^(.+?)(?:[。！？!?；;]|\.(?=\s|$)|$)/);
+    return m ? m[1].trim() : '';
+  };
+
+  const NUM_RE = /^\s*(?:(?:step|phase|stage|part)\s*\d+\s*[:：.)\-–—]?\s*|第\s*[0-9一二三四五六七八九十]+\s*[步章节阶段部分]\s*[:：.、\-–—]?\s*|\d{1,2}(?:\.\d+)*\s*[.)、:：]\s*|\d{1,2}\s+(?=\S))/i;
+  const stripNum = t => { const s = t.replace(NUM_RE, '').trim(); return s || t; };
+  const numOf = t => {
+    const m = String(t).match(/^\s*(?:(?:step|phase|stage|part)\s*(\d+)|第\s*([0-9一二三四五六七八九十]+)|(\d{1,2}))/i);
+    if (!m) return null;
+    return cnNum(m[1] || m[2] || m[3]);
+  };
+  function cnNum(s) {
+    if (/^\d+$/.test(s)) return +s;
+    const map = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+    if (s.length === 1) return map[s] || null;
+    if (s[0] === '十') return 10 + (map[s[1]] || 0);
+    if (s[1] === '十') return map[s[0]] * 10 + (map[s[2]] || 0);
+    return null;
+  }
+
+  const RE_TRIGGER = /(when (not )?to use|use this skill|何时(不)?(使用|用)|什么时候|触发|适用(场景|范围)?|使用场景|trigger)/i;
+  const RE_NOT = /(not|don'?t|不|别)/i;
+  const RE_RULES = /(rules?\b|规则|注意|须知|notes?\b|gotchas?|pitfalls?|caveats?|坑|warnings?|caution|don'?ts?\b|never|禁止|红线|safety|安全|important|重要|tips?\b|提示|principles?|原则|constraints?|约束|guardrails?|best practices?|最佳实践|anti-?patterns?|mistakes|常见错误|守则|要点|铁律)/i;
+  const RE_REF = /(reference|参考|appendix|附录|examples?|示例|例子|faq|troubleshoot|排错|排查|background|背景|overview|概述|概览|简介|about|关于|files?\b|文件|structure|结构|目录|\bapi\b|options?|选项|parameters?|参数|config(uration)?|glossary|术语|resources?|资源|links?\b|链接|see also|另见|related|相关|license|credits?|致谢|分工|scope|另一条路|alternatives?|备选|清单|checklist|cheat ?sheet|速查|terminology|concepts?|概念|your role|角色|what is|是什么)/i;
+  const RE_FLOW = /(workflow|流程|步骤|steps?\b|process|procedure|pipeline|phases?|stages?|阶段|how to|usage|用法|怎么|如何|quick ?start|快速|getting started|开始|instructions?|做法|方法|run(ning)?\b|运行|执行|build|构建|create|创建|generat|生成|deliver|交付|收尾|之后|交回|review|检查|验收|verify|验证|install|安装|set ?up|publish|发布|output|输出|route|路由|enter|进入|start|启动|plan|规划|draft|起草|write|撰写|edit|编辑|test|测试|debug|调试|fix|修复|export|导出|render|渲染|import|导入|launch|循环|loop|iterate|迭代|对照|还原|命令|commands?|load|加载|resolve|choose|select|选择|decide|判断|ask|询问|confirm|确认|collect|收集|gather|search|搜索|research|调研|analy|分析|compose|合成|record|录制|capture|save|保存|send|发送|share|分享|deploy|部署|update|更新|clean|清理|handoff|交接|finish|完成)/i;
+  const RE_STRONG_FLOW = /(workflow|流程|步骤|steps?\b|process|procedure|pipeline|做法)/i;
+  const RE_COND = /^(?:if|when|whether|unless|in case|is there|are there|does|do|has|have|can|should|如果|若|假如|要是|是否|有没有|当|一旦|万一|没有|如)\b|^(?:如果|若|假如|要是|是否|有没有|一旦|万一)/i;
+  const RE_OPT = /^\s*[\[(（【]\s*(?:if necessary|if needed|optional|if absolutely necessary|可选|按需|必要时|如有必要)[^\])）】]*[\])）】]\s*/i;
+  const RE_TABLE_COND = /(state|condition|\bif\b|when|case|situation|scenario|input|request|signal|情况|条件|状态|场景|输入|请求|信号)/i;
+  const RE_TABLE_ACT = /(action|\bdo\b|route|then|use|skill|workflow|result|go to|处理|动作|做法|路由|去向|结果|用|操作|执行)/i;
+
+  const ICON_RULES = [
+    ['bot', /agent|codex|claude|\bai\b|\bllm\b|delegate|委托|交给|\bgpt/i],
+    ['bug', /\bbug|debug|调试|排错|报错|\berror|故障/i],
+    ['git-pull-request', /pull request|\bPRs?\b|合并请求/i],
+    ['git-branch', /\bgit\b|branch|分支|worktree|commit|提交/i],
+    ['search', /search|\bfind\b|look ?up|查找|搜索|检索|调研|research|explore|探索|\bgrep\b|定位/i],
+    ['scan-eye', /review|审查|审阅|对照|compare|比对|核对|inspect|检视/i],
+    ['circle-check', /verify|验证|验收|\bcheck|检查|确认|confirm|\btest|测试|\bpass\b|通过|\bdone\b|完成/i],
+    ['eye', /preview|预览|\bview\b|查看|看一遍|观察|\bshow\b|展示/i],
+    ['terminal', /command|命令|\bcli\b|bash|shell|powershell|\bnpm\b|\bnpx\b|python|script|脚本|\bexec\b|运行|\brun\b|执行/i],
+    ['download', /install|安装|download|下载|\bfetch\b|拉取/i],
+    ['settings', /config|配置|设置|settings?|set ?up|环境|\benv\b/i],
+    ['message-square', /\bask\b|询问|follow.?up|clarif|追问|\buser\b|用户|reply|回复|\bchat\b|对话|comment|评论|feedback|反馈/i],
+    ['file-text', /write|撰写|写|draft|起草|\bdoc\b|文档|report|报告|markdown|readme|描述|说明|summary|总结/i],
+    ['wrench', /\bfix\b|修复|repair|修|patch|补丁/i],
+    ['pencil', /\bedit|编辑|修改|改|modify|update|更新|tweak|调整|refine|润色/i],
+    ['image', /image|图片|出图|picture|photo|\bpng\b|jpe?g|illustrat|插画|原画|concept|三视图/i],
+    ['film', /video|视频|render|渲染|animation|动画|\bclip|剪辑|movie|footage/i],
+    ['mic', /voice|配音|narrat|旁白|\btts\b|speech|录音/i],
+    ['music', /audio|音频|music|音乐|sound|声音|\bbgm\b|\bsfx\b/i],
+    ['palette', /design|设计|color|配色|颜色|\bstyle|风格|theme|主题|visual|视觉|brand|品牌/i],
+    ['box', /model|模型|建模|\b3d\b|blender|mesh|网格/i],
+    ['package', /build|构建|package|打包|bundle|compile|编译|export|导出/i],
+    ['send', /publish|发布|deliver|交付|\bsend\b|发送|share|分享|\bpost\b|推送|\bpush\b|deploy|部署|上线|汇报|给用户/i],
+    ['list-checks', /checklist|清单|\btodo|待办|\blist\b|列表|\bplan\b|计划|规划|outline|大纲|storyboard|分镜|decompos|拆解/i],
+    ['route', /route|路由|routing|dispatch|分发|选择|choose|select|\bpick\b|decide|决定|判断/i],
+    ['shield-check', /\brules?\b|规则|safe|安全|permission|权限|secur|guard|保护|never|禁止|不要|\bmust\b|必须/i],
+    ['book-open', /reference|参考|\bread\b|阅读|读|learn|学习|guide|指南|manual|手册|\bdocs\b/i],
+    ['database', /\bdata\b|数据|\bstore|存储|memory|记忆|cache|缓存|\bsave\b|保存|\bdb\b|database|ledger|记录/i],
+    ['globe', /\bweb\b|browser|浏览器|\burl\b|\bsite\b|网站|网页|https?:|\bpage\b|页面/i],
+    ['folder', /\bfiles?\b|文件|folder|目录|director|project|项目|\brepo\b|仓库|\bpath\b|路径/i],
+    ['table', /\btable\b|表格|spreadsheet|xlsx|\bcsv\b|excel/i],
+    ['presentation', /slide|幻灯|\bppt|\bdeck\b|演示/i],
+    ['clock', /\bwait|等待|schedule|定时|\bcron\b|\btime\b|时间|timer|delay|延迟/i],
+    ['refresh-cw', /repeat|重复|\bloop|循环|iterate|迭代|\bagain\b|再次|retry|重试|回到/i],
+    ['sparkles', /generat|生成|create|创建|\bnew\b|新建|\bmake\b|制作|compose|合成/i],
+    ['layers', /layer|图层|structure|结构|stack|叠/i],
+    ['cpu', /server|服务器|\bgpu\b|compute|算力|\bdgx\b|cluster|集群|comfyui/i],
+    ['link', /\blink|链接|connect|连接|integrat|接入|接进|\bhook/i],
+    ['upload', /upload|上传|import|导入/i],
+    ['zap', /trigger|触发|event|事件|webhook|快速|quick|\bfast\b/i],
+    ['puzzle', /plugin|插件|\bskills?\b|技能|extension|扩展/i],
+    ['type', /\btext\b|文字|\bfont|字体|caption|字幕|title|标题|typograph/i],
+    ['monitor', /screen|屏幕|desktop|桌面|\bapp\b|应用|window|窗口|\bui\b|界面/i],
+    ['key', /\bkey\b|密钥|token|\bauth|登录|login|credential|凭据|account|账号/i],
+    ['users', /\bteam|团队|分工|\brole|角色|collab|协作|subagent/i],
+    ['lightbulb', /\bidea|想法|\btips?\b|insight|\bwhy\b|原因|思路|principle|原则/i],
+  ];
+  function pickIcon(title, rest, fallback) {
+    for (const src of [title, rest]) {
+      if (!src) continue;
+      for (const [icon, re] of ICON_RULES) if (re.test(src)) return icon;
+    }
+    return fallback;
+  }
+
+  const firstCode = s => { const m = String(s || '').match(/`([^`\n]{1,40})`/); return m ? m[1].trim() : ''; };
+
+  /* 一条文字 → 标题 + 说明 */
+  function splitLead(text) {
+    const t = String(text || '').trim();
+    let m = t.match(/^(?:\*\*|__)([\s\S]+?)(?:\*\*|__)\s*([:：—–\-.。]?)\s*([\s\S]*)$/);
+    if (m && units(md.strip(m[1])) <= 44) {
+      return { title: md.strip(m[1]).replace(/[:：。.]+$/, ''), rest: md.strip(m[3]).replace(/^[，,、；;：:。.\s]+/, '') };
+    }
+    m = t.match(/^`([^`]{1,40})`\s*(?:[:：—–]|\s-\s)\s*([\s\S]*)$/);
+    if (m) return { title: m[1], rest: md.strip(m[2]) };
+    const c = md.strip(t);
+    m = c.match(/^(.{1,40}?)\s*(?:[:：]\s*|\s[—–-]\s|——)\s*(.+)$/);
+    if (m && units(m[1]) <= 32) return { title: m[1].trim(), rest: m[2].trim() };
+    m = c.match(/^(.+?)([，,；;。！!？?]|\.(?=\s|$)|$)/);
+    let title = (m ? m[1] : c).trim();
+    let rest = m ? c.slice(m[0].length).trim() : '';
+    if (m && /[？?]/.test(m[2])) title += '?';
+    if (units(title) > 30) {
+      const short = cut(title, 26).replace(/…$/, '');
+      rest = (title.slice(short.length).trim() + (m && m[2] && !/[？?]/.test(m[2]) ? m[2] : '') + ' ' + rest).trim();
+      title = short + '…';
+    }
+    return { title, rest };
+  }
+
+  function firstText(blocks) {
+    for (const b of blocks || []) {
+      if (b.type === 'paragraph') return md.strip(b.text);
+      if (b.type === 'list') return b.items.slice(0, 3).map(it => md.strip(it.text)).join('；');
+      if (b.type === 'table') return b.rows.slice(0, 2).map(r => md.strip(r[0])).join('；');
+      if (b.type === 'quote') return md.strip(b.text);
+    }
+    return '';
+  }
+
+  function tableKind(tb) {
+    if (!tb.header || tb.header.length < 2) return 'rows';
+    return RE_TABLE_COND.test(md.strip(tb.header[0])) && RE_TABLE_ACT.test(md.strip(tb.header.slice(1).join(' '))) ? 'decide' : 'rows';
+  }
+
+  /* 章节里能当节点的条目 */
+  function sectionItems(sec) {
+    if (sec.subs && sec.subs.length >= 2) {
+      return { kind: 'subs', ordered: true, items: sec.subs.map(s => ({ kind: 'sub', title: s.title, blocks: s.blocks, number: numOf(md.strip(s.title)) })) };
+    }
+    const blocks = sec.blocks;
+    for (const b of blocks) {
+      if (b.type === 'list' && b.ordered && b.items.length >= 2) {
+        return { kind: 'ol', ordered: true, items: b.items.map(it => ({ kind: 'item', text: it.text, blocks: it.blocks, number: it.number })) };
+      }
+      if (b.type === 'table' && b.rows.length >= 2) {
+        const tk = tableKind(b);
+        return { kind: tk === 'decide' ? 'decide' : 'table', ordered: tk === 'decide', header: b.header, items: b.rows.map(r => ({ kind: tk === 'decide' ? 'rule' : 'row', cells: r, header: b.header })) };
+      }
+      if (b.type === 'list' && !b.ordered && b.items.length >= 2) {
+        return { kind: 'ul', ordered: false, items: b.items.map(it => ({ kind: 'item', text: it.text, blocks: it.blocks })) };
+      }
+    }
+    return { kind: 'none', ordered: false, items: [] };
+  }
+
+  function makeAuto(fm, body, opts) {
+    const blocks = md.parseBlocks(body);
+    const doc = md.sectionize(blocks);
+    const data = fm.data || {};
+    const name = String(data.name || opts.fallbackName || 'skill');
+    const desc = md.strip(Array.isArray(data.description) ? data.description.join(' ') : (data.description || ''));
+    const zh = cjkRatio(desc + ' ' + body.slice(0, 4000)) > 0.12;
+    /* 生成的标签跟随界面语言；「直到 / until」引用的是原文，跟随原文语言 */
+    const T = (k, ...a) => SV.i18n.t(k, ...a);
+    const L = {
+      trigger: T('x.trigger'), flow: T('x.flow'), ref: T('x.ref'), rules: T('x.rules'), more: n => T('x.more', n),
+      steps: n => T('x.steps', n), stages: n => T('x.stages', n), items: n => T('x.items', n), optional: T('x.optional'),
+      notUse: T('x.notUse'), back: n => T('x.back', n), body: T('x.body'), until: zh ? '直到' : 'until',
+    };
+
+    let seq = 0;
+    const nid = () => 'n' + (++seq);
+    const lanes = [];
+    const edges = [];
+    const stubs = [];
+    const notes = [];
+    let triggerText = '';
+    let triggerDetail = '';
+
+    /* 条目 → 节点 */
+    function nodeFrom(item, ctx) {
+      let title, rest, detail, tag = '', number = item.number || null, raw = '';
+      if (item.kind === 'sub') {
+        const plain = md.strip(item.title);
+        title = stripNum(plain);
+        rest = firstText(item.blocks);
+        detail = '### ' + item.title + '\n\n' + md.blocksToMd(item.blocks);
+        raw = plain + ' ' + md.blocksToText(item.blocks);
+        if (number == null) number = numOf(plain);
+      } else if (item.kind === 'row' || item.kind === 'rule') {
+        const cells = item.cells.map(c => md.strip(c));
+        title = cells[0] || '';
+        rest = cells.slice(1).filter(Boolean).join(' · ');
+        detail = item.header.map((h, i) => `**${md.strip(h)}**：${item.cells[i] || ''}`).join('\n\n');
+        raw = cells.join(' ');
+        tag = firstCode(item.cells[0]);
+      } else if (item.kind === 'section') {
+        const plain = md.strip(item.title);
+        title = stripNum(plain);
+        rest = firstText(item.blocks);
+        detail = '## ' + item.title + '\n\n' + md.blocksToMd(item.blocks);
+        raw = plain + ' ' + md.blocksToText(item.blocks);
+        if (number == null) number = numOf(plain);
+      } else {
+        const sl = splitLead(item.text);
+        title = sl.title;
+        rest = sl.rest;
+        detail = item.text + (item.blocks && item.blocks.length ? '\n\n' + md.blocksToMd(item.blocks) : '');
+        raw = md.strip(item.text) + ' ' + md.blocksToText(item.blocks);
+        tag = firstCode(item.text);
+        if (!rest && item.blocks) rest = firstText(item.blocks);
+      }
+      let optional = false;
+      if (RE_OPT.test(title)) { optional = true; title = title.replace(RE_OPT, '').trim(); }
+      if (/[(（](optional|可选)[)）]/i.test(title)) { optional = true; title = title.replace(/\s*[(（](optional|可选)[)）]/i, '').trim(); }
+      const node = { id: nid(), type: 'step', title, lines: rest, tag: '', icon: '', detail, number, optional };
+      if (tag && units(tag) <= 18 && tag !== title) node.tag = tag;
+      else if (optional) node.tag = L.optional;
+      else if (ctx.ordered && number != null && ctx.kind !== 'ref') node.tag = T('x.stepTag', number);
+      if (optional && node.tag !== L.optional) node.tag = L.optional;
+      node.icon = pickIcon(title, rest, ctx.kind === 'ref' ? 'book-open' : 'circle-dot');
+
+      if (item.kind === 'rule' || (ctx.kind !== 'ref' && RE_COND.test(title))) {
+        node.type = 'decision';
+        let q = title.replace(/^(?:if|when|whether|unless|in case|如果|若|假如|要是|当|一旦|万一)\s*/i, '').replace(/[?？…]+$/, '').trim();
+        if (item.kind === 'rule') q = title.replace(/[?？]+$/, '');
+        node.title = (q || title) + '?';
+        node.icon = '';
+        const act = item.kind === 'rule' ? rest : firstSentence(rest);
+        if (act) node.stub = act;
+        node.lines = '';
+      }
+
+      const loop = raw.match(/(?:回到|返回|回|重复|重新执行|再做)\s*第\s*([0-9一二三四五六七八九十]+)\s*步|(?:go(?:ing)?|loop|jump|return|come)\s+back\s+to\s+step\s*(\d+)|(?:repeat|restart)\s+(?:from\s+)?step\s*(\d+)|back to step\s*(\d+)/i);
+      const until = raw.match(/(?:直到|until)\s*([^，,。.;；\n]{2,40})/i);
+      const untilLabel = until ? L.until + (zh ? '' : ' ') + until[1].trim() : '';
+      if (loop) node.loopTo = { number: cnNum(loop[1] || loop[2] || loop[3] || loop[4]), label: untilLabel || L.back(cnNum(loop[1] || loop[2] || loop[3] || loop[4])) };
+      else if (until && /(重复|循环|反复|迭代|repeat|iterate|loop|again)/i.test(raw)) node.loopTo = { number: null, label: untilLabel };
+      return node;
+    }
+
+    function capNodes(nodes, ctx) {
+      const MAX = 8;
+      if (nodes.length <= MAX) return nodes;
+      const keep = nodes.slice(0, MAX - 1);
+      const rest = nodes.slice(MAX - 1);
+      keep.push({
+        id: nid(), type: 'step', title: L.more(rest.length), tag: '', icon: 'list',
+        lines: rest.map(n => n.title).join(' · '),
+        detail: rest.map(n => n.detail).join('\n\n---\n\n'), more: true,
+      });
+      return keep;
+    }
+
+    /* —— 章节分类 —— */
+    const secs = doc.sections.map(s => {
+      const plain = md.strip(s.title);
+      const numbered = NUM_RE.test(plain) && numOf(plain) != null;
+      const title = stripNum(plain);
+      const its = sectionItems(s);
+      let cls;
+      if (RE_TRIGGER.test(title)) cls = RE_NOT.test(title) && /not|不/.test(title) ? 'notuse' : 'trigger';
+      else if (RE_RULES.test(title) && !numbered) cls = 'rules';
+      else if (numbered) cls = 'flow';
+      else if (RE_REF.test(title)) cls = 'ref';
+      else if (RE_FLOW.test(title)) cls = 'flow';
+      else cls = its.ordered ? 'flow' : 'unknown';
+      return { s, title, cls, its, numbered };
+    });
+    if (!secs.some(x => x.cls === 'flow')) secs.forEach(x => { if (x.cls === 'unknown') x.cls = 'flow'; });
+    secs.forEach(x => { if (x.cls === 'unknown') x.cls = 'ref'; });
+
+    /* 没有任何章节：正文本身当一个章节 */
+    if (!secs.length) {
+      const its = sectionItems({ blocks: doc.intro, subs: [] });
+      secs.push({ s: { title: doc.title || name, blocks: doc.intro, subs: [] }, title: md.strip(doc.title || L.body), cls: 'flow', its, numbered: false });
+    }
+
+    /* —— 触发节点 —— */
+    for (const x of secs.filter(x => x.cls === 'trigger')) {
+      triggerText = triggerText || firstText(x.s.blocks.concat(...x.s.subs.map(s => s.blocks)));
+      triggerDetail += '## ' + x.s.title + '\n\n' + md.blocksToMd(x.s.blocks) + '\n\n';
+    }
+    for (const x of secs.filter(x => x.cls === 'notuse')) {
+      const its = x.its.items.length ? x.its.items : [{ kind: 'item', text: firstText(x.s.blocks), blocks: [] }];
+      its.slice(0, 3).forEach(it => notes.push({ text: L.notUse + md.strip(it.text || (it.cells || []).join(' · ')), detail: md.blocksToMd(x.s.blocks) }));
+    }
+    if (!triggerText && desc) {
+      const m = desc.match(/(?:use (?:this skill )?(?:when|whenever)\b|use (?:this skill )?for\b|trigger(?:s)? (?:on|when)\b|凡是|遇到|用于|适用于)[^.。;；]*/i);
+      triggerText = m ? m[0] : firstSentence(desc);
+    }
+
+    /* —— 流程泳道 —— */
+    const COLORS = ['green', 'blue', 'purple', 'teal', 'rose', 'amber'];
+    let colorIdx = 0;
+    let singles = null;
+    /* 连续的单步章节合成一条「主流程」泳道；只有一个时不加框，像触发卡片那样单独一行 */
+    const flushSingles = () => {
+      if (!singles) return;
+      const bare = singles.length === 1;
+      lanes.push({
+        id: 'L' + (lanes.length + 1), kind: bare ? 'bare' : 'flow', color: bare ? (lanes.filter(l => l.kind === 'flow').slice(-1)[0] || {}).color || COLORS[0] : COLORS[colorIdx++ % COLORS.length],
+        title: bare ? singles[0].title : L.flow,
+        tag: bare ? '' : L.stages(singles.length),
+        nodes: capNodes(singles.map(x => x.node), { kind: 'flow' }), notes: [],
+      });
+      singles = null;
+    };
+
+    for (const x of secs.filter(x => x.cls === 'flow')) {
+      const its = x.its;
+      const chained = its.kind === 'subs' || its.kind === 'ol' || its.kind === 'decide' || (its.kind === 'ul' && RE_STRONG_FLOW.test(x.title));
+      if (chained && its.items.length >= 2) {
+        flushSingles();
+        const ctx = { kind: 'flow', ordered: its.ordered };
+        const nodes = capNodes(its.items.map(it => nodeFrom(it, ctx)), ctx);
+        lanes.push({
+          id: 'L' + (lanes.length + 1), kind: 'flow', color: COLORS[colorIdx++ % COLORS.length],
+          title: x.title, tag: its.kind === 'decide' ? T('x.firstMatch') : L.steps(its.items.length), nodes, notes: [],
+          num: x.numbered ? numOf(md.strip(x.s.title)) : null,
+        });
+      } else {
+        const node = nodeFrom({ kind: 'section', title: x.s.title, blocks: x.s.blocks }, { kind: 'flow', ordered: x.numbered });
+        if (x.numbered) node.tag = T('x.stageTag', numOf(md.strip(x.s.title)));
+        (singles = singles || []).push({ title: x.title, node });
+      }
+    }
+    flushSingles();
+
+    /* —— 参考泳道 —— */
+    const refSecs = secs.filter(x => x.cls === 'ref');
+    const refSingles = [];
+    let refLanes = 0;
+    for (const x of refSecs) {
+      if (x.its.items.length >= 2 && refLanes < 3) {
+        refLanes++;
+        const ctx = { kind: 'ref', ordered: false };
+        lanes.push({
+          id: 'L' + (lanes.length + 1), kind: 'ref', color: 'slate', title: x.title, tag: L.items(x.its.items.length),
+          nodes: capNodes(x.its.items.map(it => nodeFrom(it, ctx)), ctx), notes: [],
+        });
+      } else {
+        refSingles.push(nodeFrom({ kind: 'section', title: x.s.title, blocks: x.s.blocks }, { kind: 'ref' }));
+      }
+    }
+    if (refSingles.length) {
+      lanes.push({ id: 'L' + (lanes.length + 1), kind: 'ref', color: 'slate', title: L.ref, tag: L.items(refSingles.length), nodes: capNodes(refSingles, { kind: 'ref' }), notes: [] });
+    }
+
+    /* —— 规则 → 注释 —— */
+    for (const x of secs.filter(x => x.cls === 'rules')) {
+      const its = x.its.items.length ? x.its.items : x.s.blocks.filter(b => b.type === 'paragraph').slice(0, 2).map(b => ({ kind: 'item', text: b.text, blocks: [] }));
+      for (const it of its) {
+        let text;
+        if (it.kind === 'sub') text = stripNum(md.strip(it.title)) + (firstText(it.blocks) ? '：' + firstText(it.blocks) : '');
+        else if (it.kind === 'row' || it.kind === 'rule') text = it.cells.map(c => md.strip(c)).filter(Boolean).join('：');
+        else { const sl = splitLead(it.text); text = sl.rest ? sl.title.replace(/…$/, '') + '：' + sl.rest : sl.title; }
+        notes.push({ text, detail: '## ' + x.s.title + '\n\n' + md.blocksToMd(x.s.blocks) });
+      }
+    }
+    const flowLanes = lanes.filter(l => l.kind === 'flow' || l.kind === 'bare');
+    const framed = lanes.filter(l => l.kind === 'flow');
+    if (notes.length && notes.length <= 3 && framed.length) {
+      framed[framed.length - 1].notes = notes.map(n => n.text);
+    } else if (notes.length) {
+      const shown = notes.slice(0, 7).map(n => n.text);
+      if (notes.length > 7) shown.push(L.more(notes.length - 7));
+      lanes.push({ id: 'L' + (lanes.length + 1), kind: 'notes', color: 'amber', title: L.rules, tag: L.items(notes.length), nodes: [], notes: shown });
+    }
+
+    /* —— 连线 —— */
+    const trigger = (triggerText || desc) ? {
+      id: 'start', type: 'trigger', title: L.trigger, tag: 'Trigger', icon: 'bell', lines: triggerText || firstSentence(desc),
+      detail: (desc ? '**description**：' + desc + '\n\n' : '') + triggerDetail,
+    } : null;
+    const chain = [];
+    flowLanes.forEach(l => l.nodes.forEach(n => chain.push(n)));
+    if (trigger && chain.length) edges.push({ from: 'start', to: chain[0].id, kind: 'flow' });
+    for (let i = 0; i + 1 < chain.length; i++) {
+      const a = chain[i], b = chain[i + 1];
+      edges.push({ from: a.id, to: b.id, kind: 'flow', label: a.type === 'decision' && a.stub ? 'No' : '' });
+    }
+    chain.forEach(n => {
+      if (n.type === 'decision' && n.stub) stubs.push({ from: n.id, text: n.stub, label: 'Yes' });
+      delete n.stub;
+    });
+    flowLanes.forEach(l => {
+      l.nodes.forEach((n, idx) => {
+        if (!n.loopTo) return;
+        let target = null;
+        if (n.loopTo.number != null) target = l.nodes.find(m => m.number === n.loopTo.number) || chain.find(m => m.number === n.loopTo.number && m !== n);
+        if (!target) target = idx > 0 ? l.nodes[Math.max(0, idx - 1)] : null;
+        if (target && target !== n) edges.push({ from: n.id, to: target.id, kind: 'loop', label: cut(n.loopTo.label, 30) });
+        delete n.loopTo;
+      });
+    });
+    if (chain.length) chain[chain.length - 1].terminal = true;
+
+    const h1 = doc.title ? md.strip(doc.title) : '';
+    const title = h1 || name;
+    const subtitle = cut(firstSentence(desc) || (h1 && h1 !== name ? name : ''), 92);
+    return {
+      source: 'auto', zh, name, description: desc,
+      title, subtitle,
+      window: `skills / ${name} / SKILL.md`,
+      hero: { title: h1 && h1 !== name ? name : T('hero.default'), sub: '' },
+      footer: T('footer.auto'),
+      trigger, lanes, edges, stubs,
+      stats: { lanes: lanes.length, steps: chain.length, nodes: lanes.reduce((a, l) => a + l.nodes.length, 0) + (trigger ? 1 : 0) },
+    };
+  }
+
+  function extract(text, opts) {
+    opts = opts || {};
+    const fm = md.parseFrontMatter(text);
+    const m = fm.body.match(/(^|\n)\s*(`{3,}|~{3,})\s*skillflow[^\n]*\n([\s\S]*?)\n\s*\2/);
+    let spec;
+    if (m) {
+      spec = SV.dsl.parse(m[3], { name: fm.data.name, description: fm.data.description });
+      spec.source = 'skillflow';
+    } else {
+      spec = makeAuto(fm, fm.body, opts);
+    }
+    spec.frontMatter = fm.data;
+    return spec;
+  }
+
+  Object.assign(SV, { extract, text: { units, cut, cjkRatio, firstSentence, pickIcon, CJK } });
+};
+SV.mod.extract(SV);

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SkillLens</title>
+  <link rel="icon" href="docs/logo.svg" type="image/svg+xml">
+  <!-- 字体：Noto Sans SC（中文）、Inter（英文）、JetBrains Mono（标签）；断网时退回系统字体 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;1,800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;800&display=swap">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><i data-icon="workflow"></i><span data-t="app.title">SkillLens</span> <small data-t="app.tagline">SKILL.md → animated flowchart</small></div>
+      <div class="current" id="current"><b data-t="current.none">No skill selected</b></div>
+      <span class="tr-chip" id="trStatus" hidden></span>
+      <div class="tools">
+        <button class="btn icon" id="btnPrev" data-t-title="btn.prev"><i data-icon="chevron-left"></i></button>
+        <button class="btn primary" id="btnPlay" data-t-title="btn.playTitle"><i data-icon="pause"></i><span>Pause</span></button>
+        <button class="btn icon" id="btnNext" data-t-title="btn.next"><i data-icon="chevron-right"></i></button>
+        <select class="btn" id="selSpeed" data-t-title="sel.speed">
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+        <span class="sep"></span>
+        <button class="btn icon" id="btnZoomOut" data-t-title="btn.zoomOut"><i data-icon="minus"></i></button>
+        <button class="btn ghost zoom-label" id="btnZoomFit" data-t-title="btn.zoomFit">100%</button>
+        <button class="btn icon" id="btnZoomIn" data-t-title="btn.zoomIn"><i data-icon="plus"></i></button>
+        <span class="sep"></span>
+        <select class="btn" id="selCols" data-t-title="sel.cols">
+          <option value="3">3</option>
+          <option value="4" selected>4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+        </select>
+        <select class="btn" id="selTheme" data-t-title="btn.theme">
+          <option value="blueprint">Blueprint</option>
+          <option value="dark">Midnight</option>
+          <option value="light">Glass</option>
+        </select>
+        <button class="btn icon" id="btnTrans" data-t-title="btn.trans" hidden><i data-icon="languages"></i></button>
+        <button class="btn lang" id="btnLang" data-t-title="btn.lang">EN</button>
+        <button class="btn icon" id="btnPresent" data-t-title="btn.present"><i data-icon="maximize"></i></button>
+        <div class="menu" id="exportMenu">
+          <button class="btn" id="btnExport"><i data-icon="download"></i><span data-t="btn.export">Export</span></button>
+          <div class="menu-list">
+            <button data-export="html"><i data-icon="file-code"></i><span data-t="exp.html">Standalone page (animated)</span><small>.html</small></button>
+            <button data-export="svg"><i data-icon="image"></i><span data-t="exp.svg">Current frame</span><small>.svg</small></button>
+            <button data-export="png"><i data-icon="image"></i><span data-t="exp.png">Current frame (2×)</span><small>.png</small></button>
+            <button data-export="video"><i data-icon="film"></i><span data-t="exp.video">Record video</span><small>.mp4</small></button>
+            <hr>
+            <button data-export="flow"><i data-icon="clipboard-copy"></i><span data-t="exp.flow">Copy skillflow block</span></button>
+            <button data-export="spec"><i data-icon="braces"></i><span data-t="exp.spec">Export structure data</span><small>.json</small></button>
+          </div>
+        </div>
+        <button class="btn icon" id="btnPanel" data-t-title="btn.panel"><i data-icon="panel-right"></i></button>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <div class="side-actions">
+        <button class="btn" id="btnOpenDir" data-t-title="side.dirTitle"><i data-icon="folder-open"></i><span data-t="side.dir">Folder</span></button>
+        <button class="btn" id="btnOpenFile" data-t-title="side.fileTitle"><i data-icon="file-text"></i><span data-t="side.file">Files</span></button>
+        <button class="btn" id="btnPaste" data-t-title="side.pasteTitle"><i data-icon="clipboard-paste"></i><span data-t="side.paste">Paste</span></button>
+      </div>
+      <div class="search"><input id="search" type="search" data-t-ph="search.ph" placeholder="Search skills by name or description…" autocomplete="off"></div>
+      <div class="list" id="list"></div>
+      <input type="file" id="inDir" webkitdirectory multiple hidden>
+      <input type="file" id="inFile" accept=".md,.markdown,.txt" multiple hidden>
+    </aside>
+
+    <main class="stage-wrap">
+      <div class="stage" id="stage"><div class="canvas" id="canvas"></div></div>
+      <div class="empty" id="empty" hidden>
+        <div>
+          <i data-icon="workflow" data-size="44"></i>
+          <h2 data-t="empty.title">Turn any SKILL.md into an animated flowchart</h2>
+          <p data-t="empty.p1"></p>
+          <p data-t-html="empty.p2"></p>
+          <div class="row">
+            <button class="btn primary" data-act="openDir"><i data-icon="folder-open"></i><span data-t="empty.openDir">Open folder</span></button>
+            <button class="btn" data-act="paste"><i data-icon="clipboard-paste"></i><span data-t="empty.paste">Paste content</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </main>
+
+    <aside class="panel" id="panel">
+      <nav class="tabs">
+        <button class="tab active" data-tab="detail" data-t="tab.detail">Details</button>
+        <button class="tab" data-tab="struct" data-t="tab.struct">Structure</button>
+        <button class="tab" data-tab="source" data-t="tab.source">Source</button>
+      </nav>
+      <section class="tab-body detail" data-body="detail" id="detail"></section>
+      <section class="tab-body flex" data-body="struct" hidden>
+        <div class="hint" data-t-html="struct.hint"></div>
+        <textarea class="editor" id="editor" spellcheck="false"></textarea>
+        <div class="warn" id="editorWarn"></div>
+        <div class="row-btns">
+          <button class="btn primary" id="btnApply"><i data-icon="check"></i><span data-t="btn.apply">Apply</span></button>
+          <button class="btn" id="btnReset"><i data-icon="rotate-ccw"></i><span data-t="btn.reset">Reset to auto</span></button>
+          <button class="btn" id="btnCopyFlow"><i data-icon="clipboard-copy"></i><span data-t="btn.copyFlow">Copy as code block</span></button>
+        </div>
+      </section>
+      <section class="tab-body" data-body="source" hidden><pre class="source" id="source"></pre></section>
+    </aside>
+  </div>
+
+  <div class="modal" id="pasteModal" hidden>
+    <div class="modal-card">
+      <h3 data-t="paste.title">Paste SKILL.md content</h3>
+      <textarea class="editor" id="pasteText" spellcheck="false" placeholder="---&#10;name: my-skill&#10;description: …&#10;---&#10;&#10;# Title&#10;&#10;## Workflow&#10;&#10;1. …"></textarea>
+      <div class="row-btns">
+        <button class="btn" data-close data-t="paste.cancel">Cancel</button>
+        <button class="btn primary" id="btnPasteOk"><i data-icon="check"></i><span data-t="paste.ok">Visualize</span></button>
+      </div>
+    </div>
+  </div>
+  <div class="drop" data-t="drop">Drop to import SKILL.md files or a whole folder</div>
+  <button class="btn present-exit" id="btnExitPresent"><i data-icon="minimize"></i><span data-t="present.exit">Exit presentation</span></button>
+
+  <script src="src/icons.js"></script>
+  <script src="src/i18n.js"></script>
+  <script src="src/markdown.js"></script>
+  <script src="src/extract.js"></script>
+  <script src="src/dsl.js"></script>
+  <script src="src/layout.js"></script>
+  <script src="src/render.js"></script>
+  <script src="data/skills.js" onerror="window.SV_DATA = window.SV_DATA || null"></script>
+  <script src="data/translations.js" onerror="window.SV_TRANS = window.SV_TRANS || null"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
