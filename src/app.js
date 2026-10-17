@@ -454,6 +454,7 @@
   function select(id, keepSel) {
     const s = findSkill(id);
     if (!s) return;
+    clearReads();
     state.currentId = id;
     if (!keepSel) { state.selected = null; state.showOrig = false; }
     if (!RECORD) {
@@ -507,6 +508,7 @@
     state.player.setSpeed(state.speed);
     if (!state.playing || RECORD) state.player.pause();
     if (t0) state.player.seek(t0);
+    if (!RECORD && readPin) state.player.setPin(readPin);
     if (state.selected) markSelected(state.selected);
     applyZoom();
   }
@@ -550,12 +552,19 @@
 
   /* —— 播放控制 —— */
   function setPlaying(v) {
+    if (v) clearReads();
     state.playing = v;
     if (state.player) v ? state.player.play() : state.player.pause();
     $('#btnPlay').innerHTML = v ? `${iconSvg('pause')}<span>${t('btn.pause')}</span>` : `${iconSvg('play')}<span>${t('btn.play')}</span>`;
   }
 
   /* —— 节点选择 —— */
+  let readPin = null, readTimer = 0;
+  function clearReads() {
+    clearTimeout(readTimer);
+    readPin = null;
+    if (!RECORD && state.player) state.player.setPin(null);
+  }
   function nodeSpec(id) {
     const sp = state.spec;
     if (!sp) return null;
@@ -569,8 +578,16 @@
     if (id) { const el = state.svg.querySelector(`.sv-node[data-node="${CSS.escape(id)}"]`); if (el) el.classList.add('selected'); }
   }
   function selectNode(id) {
+    clearReads();
     state.selected = id;
     markSelected(id);
+    if (!RECORD && state.player) {
+      const n = state.G.nodes[id], reads = state.G.reads || [];
+      if (reads.length && n && n.laneKind === 'ref') readPin = { ref: id };
+      else if (reads.length && n && ['flow', 'bare'].includes(n.laneKind)) readPin = { step: id };
+      if (readPin) setPlaying(false);
+      state.player.setPin(readPin);
+    }
     if (id && state.player) state.player.jumpTo(id);
     showTab('detail');
     if (!state.panel) togglePanel(true);
@@ -587,16 +604,31 @@
       const { n, lane } = hit;
       const ins = sp.edges.filter(e => e.to === n.id), outs = sp.edges.filter(e => e.from === n.id);
       const stubs = (sp.stubs || []).filter(x => x.from === n.id);
+      const isRef = lane && lane.kind === 'ref';
+      const reads = (sp.reads || []).filter(r => isRef ? r.to === n.id : lane && (lane.kind === 'flow' || lane.kind === 'bare') && r.from === n.id);
       const title = id => { const h = nodeSpec(id); return h ? h.n.title : id; };
       const link = (id, label, dir) => `<button data-goto="${esc(id)}">${iconSvg(dir === 'in' ? 'chevron-left' : 'chevron-right', 14)}${esc(title(id))}<small>${esc(label || '')}</small></button>`;
+      const nodeNo = {};
+      let no = 0;
+      sp.lanes.forEach(l => l.nodes.forEach(n => { nodeNo[n.id] = ++no; }));
+      const readColor = (SV.render.THEMES[state.theme] || SV.render.THEMES.dark).reads;
+      const readGlyph = '<svg width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M1 5H13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-dasharray="0.1 4" stroke-linecap="round"/></svg>';
+      const readLink = r => {
+        const id = isRef ? r.from : r.to, edge = (state.G.reads || []).find(e => e.from === r.from && e.to === r.to);
+        const target = nodeSpec(id), more = !isRef && target && target.n.more;
+        const folded = more ? (Array.isArray(target.n.lines) ? target.n.lines.join(' · ') : target.n.lines || '') : '';
+        return `<button data-goto="${esc(id)}" data-read-row="${edge ? edge.id : ''}"><span class="read-dot" aria-hidden="true"></span><span class="read-copy">${esc(title(id))}${folded ? `<span class="read-files">${esc(folded)}</span>` : ''}</span>${isRef ? `<small class="read-no">${String(nodeNo[id]).padStart(2, '0')}</small>` : ''}</button>`;
+      };
       const lines = Array.isArray(n.lines) ? n.lines.join('\n') : (n.lines || '');
       el.innerHTML = `
         <button class="btn ghost" data-goto="" style="margin:-6px 0 8px -8px">${iconSvg('chevron-left', 14)}${t('detail.back')}</button>
         <h3>${esc(n.title)}</h3>
         <div class="meta"><span class="badge">${t('type.' + (n.type || 'step'))}</span>${n.optional ? `<span class="badge">${t('detail.optional')}</span>` : ''}${n.tag ? `<span>${esc(n.tag)}</span>` : ''}${lane ? `<span>· ${esc(lane.title)}</span>` : ''}</div>
+        ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd>${esc(n.path)}</dd></dl>` : ''}
         ${lines ? `<div class="md"><p>${esc(lines).replace(/\n/g, '<br>')}</p></div>` : ''}
         ${ins.length ? `<div class="section-title">${t('detail.from')}</div><div class="links">${ins.map(e => link(e.from, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'in')).join('')}</div>` : ''}
         ${outs.length || stubs.length ? `<div class="section-title">${t('detail.to')}</div><div class="links">${outs.map(e => link(e.to, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'out')).join('')}${stubs.map(x => `<button disabled>${iconSvg('chevron-right', 14)}${esc(x.text)}<small>${esc(x.label || t('detail.exit'))}</small></button>`).join('')}</div>` : ''}
+        ${reads.length ? `<div class="section-title read-title" style="--read-color:${readColor}">${readGlyph}${t(isRef ? 'detail.usedBy' : 'detail.reads')}</div><div class="links read-links" style="--read-color:${readColor}">${reads.map(readLink).join('')}</div>` : ''}
         ${n.detail ? `<div class="section-title">${t('detail.original')}${trToggle(n.detail)}</div><div class="md">${detailHtml(n.detail)}</div>` : ''}`;
       return;
     }
@@ -628,12 +660,14 @@
     return ` <button class="link-btn" data-orig="1">${state.showOrig ? t('tr.showTr') : t('tr.showOrig')}</button>`;
   }
   function detailHtml(md) {
-    if (!detailNeedsTr(md) || state.showOrig) return SV.md.toHtml(md);
+    // 只给行内代码路径加断点，代码块保留原文
+    const html = text => SV.md.toHtml(text).replace(/<pre\b[\s\S]*?<\/pre>|<code\b[^>]*>[\s\S]*?<\/code>/g, part => part.startsWith('<pre') ? part : part.replace(/>([^<]*)<\/code>/, (_, code) => '>' + code.replace(/\//g, '/<wbr>') + '</code>'));
+    if (!detailNeedsTr(md) || state.showOrig) return html(md);
     const hit = TR.cache[trKey(state.lang, md)];
-    if (hit != null) return SV.md.toHtml(hit);
+    if (hit != null) return html(hit);
     const sel = state.selected;
     requestTr([md], true, () => { if (state.selected === sel) renderDetail(); });
-    return `<p class="hint">${t('tr.translating')}</p>` + SV.md.toHtml(md);
+    return `<p class="hint">${t('tr.translating')}</p>` + html(md);
   }
 
   function renderStruct() {
@@ -848,7 +882,15 @@ SV.i18n.set('${state.lang}');
       if (e.target.closest('[data-orig]')) { state.showOrig = !state.showOrig; renderDetail(); return; }
       const g = e.target.closest('[data-goto]');
       if (!g) return;
-      if (g.dataset.goto) selectNode(g.dataset.goto); else { state.selected = null; markSelected(null); renderDetail(); }
+      if (g.dataset.goto) selectNode(g.dataset.goto); else { clearReads(); state.selected = null; markSelected(null); renderDetail(); }
+    });
+    $('#detail').addEventListener('mouseover', e => {
+      const row = e.target.closest('[data-read-row]');
+      if (!RECORD && row && !row.contains(e.relatedTarget) && state.player) state.player.setHover(row.dataset.readRow, 1);
+    });
+    $('#detail').addEventListener('mouseout', e => {
+      const row = e.target.closest('[data-read-row]');
+      if (!RECORD && row && !row.contains(e.relatedTarget) && state.player) state.player.setHover(null);
     });
 
     $('#btnApply').onclick = () => {
@@ -934,7 +976,24 @@ SV.i18n.set('${state.lang}');
       if (moved) return;
       const node = e.target.closest && e.target.closest('.sv-node');
       if (node) selectNode(node.dataset.node);
-      else if (e.target.closest && e.target.closest('svg')) { state.selected = null; markSelected(null); renderDetail(); }
+      else {
+        clearReads();
+        if (e.target.closest && e.target.closest('svg')) { state.selected = null; markSelected(null); renderDetail(); }
+      }
+    });
+    stage.addEventListener('mouseover', e => {
+      const node = e.target.closest('.sv-node');
+      if (RECORD || !node || node.contains(e.relatedTarget) || state.playing || readPin) return;
+      const n = state.G.nodes[node.dataset.node], read = (state.G.reads || []).find(r => r.from === n.id);
+      if (!read || !['flow', 'bare'].includes(n.laneKind)) return;
+      clearTimeout(readTimer);
+      readTimer = setTimeout(() => { if (!state.playing && !readPin && state.player) state.player.setPreview(n.id); }, 120);
+    });
+    stage.addEventListener('mouseout', e => {
+      const node = e.target.closest('.sv-node');
+      if (RECORD || !node || node.contains(e.relatedTarget)) return;
+      clearTimeout(readTimer);
+      if (!readPin && state.player) state.player.setPreview(null);
     });
     stage.addEventListener('wheel', e => {
       if (!e.ctrlKey) return;
@@ -944,6 +1003,7 @@ SV.i18n.set('${state.lang}');
     window.addEventListener('resize', () => { if (state.zoom === 'fit') applyZoom(); });
 
     document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') clearReads();
       if (e.target.closest('input, textarea, select')) return;
       if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); }
       else if (e.key === 'ArrowRight') { setPlaying(false); state.player && state.player.next(); }
@@ -957,6 +1017,7 @@ SV.i18n.set('${state.lang}');
   }
 
   function showEmpty() {
+    clearReads();
     $('#empty').hidden = false;
     $('#canvas').innerHTML = '';
     $('#detail').innerHTML = '';

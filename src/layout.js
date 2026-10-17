@@ -79,8 +79,22 @@ SV.mod.layout = function (SV) {
 
   const linesText = n => Array.isArray(n.lines) ? n.lines.filter(Boolean).join('\n') : String(n.lines || '');
 
+  /* 中间省略保留扩展名及末尾三个字符，优先在分隔符后截断 */
+  function shortFile(title, maxW, size) {
+    if (measure(title, size, 700) <= maxW) return title;
+    const ext = (title.match(/\.\w{1,5}$/) || [''])[0];
+    const stem = ext ? title.slice(0, -ext.length) : title;
+    const tail = stem.slice(-3) + ext;
+    let cut = Math.max(0, stem.length - 3);
+    while (cut > 0 && measure(stem.slice(0, cut) + '…' + tail, size, 700) > maxW) cut--;
+    for (let i = cut; i >= Math.max(1, cut - 3); i--) {
+      if (/[-_]/.test(stem[i - 1])) { cut = i; break; }
+    }
+    return stem.slice(0, cut) + '…' + tail;
+  }
+
   /* 节点文字排版 */
-  function prepNode(sp, kind) {
+  function prepNode(sp, kind, hasReads) {
     const n = {
       id: sp.id, type: sp.type === 'trigger' ? 'trigger' : (sp.type || 'step'), spec: sp,
       icon: sp.icon || '', tag: sp.tag || '', terminal: !!sp.terminal, optional: !!sp.optional, more: !!sp.more,
@@ -98,7 +112,12 @@ SV.mod.layout = function (SV) {
     n.h = kind === 'trigger' ? K.TRIG_H : K.CARD_H;
     const title = String(sp.title || '');
     let size = 18, titleLines;
-    if (measure(title, 18, 700) <= K.TEXT_W) titleLines = [title];
+    if (hasReads && kind === 'ref' && title.split(' + ').every(p => /^[\w.@~/-]+\.\w{1,5}$/.test(p) || p.endsWith('/'))) {
+      // 文件名不折行：先缩字号，再收短前缀
+      size = [18, 16, 14.5, 13.5].find(s => measure(title, s, 700) <= K.TEXT_W) || 13.5;
+      titleLines = [shortFile(title, K.TEXT_W, size)];
+    }
+    else if (measure(title, 18, 700) <= K.TEXT_W) titleLines = [title];
     else if (measure(title, 16, 700) <= K.TEXT_W) { size = 16; titleLines = [title]; }
     else { size = 16; titleLines = wrap(title, K.TEXT_W, 16, 700, 2); }
     n.titleLines = titleLines; n.titleSize = size;
@@ -124,6 +143,8 @@ SV.mod.layout = function (SV) {
   function layout(spec, opt) {
     opt = opt || {};
     const cols = Math.max(2, Math.min(6, opt.cols || spec.cols || 4));
+    const nodeIds = new Set(spec.lanes.flatMap(l => (l.nodes || []).map(n => n.id)).concat(spec.trigger ? [spec.trigger.id] : []));
+    const hasReads = (spec.reads || []).some(r => nodeIds.has(r.from) && nodeIds.has(r.to));
     const W = K.LANE_X + K.PAD * 2 + cols * K.CARD_W + (cols - 1) * K.GAP + K.RIGHT;
     const colX = c => K.LANE_X + K.PAD + c * (K.CARD_W + K.GAP);
     const G = { W, H: 0, cols, K, FONT, MONO, nodes: {}, lanes: [], rows: [], edges: [], stubs: [], labels: [], notes: [], spec, warnings: [] };
@@ -175,7 +196,7 @@ SV.mod.layout = function (SV) {
         const rowDir = chained ? (r % 2 === 0 ? dir : -dir) : 1;
         const row = { g: rows.length, lane: li, r, top: cursor, bottom: cursor + K.CARD_H, nodes: [], dir: rowDir, hasStub: false, laneFirst: r === 0 };
         chunk.forEach((sp, i) => {
-          const n = prepNode(sp, 'node');
+          const n = prepNode(sp, L.kind === 'ref' ? 'ref' : 'node', hasReads);
           const col = rowDir === 1 ? i : cols - 1 - i;
           place(n, colX(col), cursor, col, row);
           n.lane = li; n.laneKind = L.kind; n.color = L.color;
@@ -237,8 +258,24 @@ SV.mod.layout = function (SV) {
     if (G.trigger) {
       const x0 = G.trigger.x + G.trigger.w + 40;
       const ly = G.hero && G.hero.place === 'trigger' ? G.trigger.y + 22 : G.trigger.cy;
-      const span = (W - K.RIGHT - x0) / 3;
+      const span = (W - K.RIGHT - x0) / (hasReads ? 4 : 3);
       G.legend = { y: ly, items: [{ x: x0, kind: 'solid', text: SV.i18n.t('legend.forward') }, { x: x0 + span, kind: 'dashed', text: SV.i18n.t('legend.loop') }, { x: x0 + span * 2, kind: 'dot', text: SV.i18n.t('legend.data') }] };
+      if (hasReads) G.legend.items.push({ x: x0 + span * 3, kind: 'reads', text: SV.i18n.t('legend.reads') });
+      if (hasReads) {
+        const items = G.legend.items, width = W - K.RIGHT - x0;
+        // 先均分余白；不足时固定最小间距，把宽度优先留给短文本
+        const budget = Math.max(0, width - items.length * 48 - (items.length - 1) * 28);
+        let lo = 0, hi = Math.max(...items.map(it => measure(it.text, 15.5)));
+        for (let i = 0; i < 32; i++) {
+          const mid = (lo + hi) / 2;
+          if (items.reduce((sum, it) => sum + Math.min(measure(it.text, 15.5), mid), 0) <= budget) lo = mid; else hi = mid;
+        }
+        if (items.reduce((sum, it) => sum + measure(it.text, 15.5), 0) > budget) items.forEach(it => { it.text = fit(it.text, lo, 15.5); });
+        const widths = items.map(it => 48 + measure(it.text, 15.5));
+        const gap = Math.max(28, (width - widths.reduce((a, b) => a + b, 0)) / (items.length - 1));
+        let x = x0;
+        items.forEach((it, i) => { it.x = x; x += widths[i] + gap; });
+      }
     }
 
     /* —— 连线 —— */
@@ -361,6 +398,26 @@ SV.mod.layout = function (SV) {
       G.edges.push(edge);
     });
 
+    /* 阅读关系独立走线，不占用流程的端口或通道 */
+    G.reads = [];
+    (spec.reads || []).forEach((r, i) => {
+      const s = G.nodes[r.from], t = G.nodes[r.to];
+      if (!s || !t) return;
+      const down = t.cy >= s.cy;
+      const right = s.col === 0 || s.col !== cols - 1 && t.cx > s.cx;
+      const x = right ? s.x + s.w : s.x, y0 = s.type === 'decision' ? s.cy : s.y + s.h - 26;
+      const yT = down ? t.row.aboveY : t.row.belowY;
+      const base = x + (right ? K.GAP / 2 : -K.GAP / 2);
+      // 只读取既有流程线，绝不占用流程端口、通道或外边距
+      const clear = xg => G.edges.every(e => e.pts.every((p, j) => {
+        const q = e.pts[j - 1];
+        return !q || p[0] !== q[0] || Math.max(p[1], q[1]) < Math.min(y0, yT) || Math.min(p[1], q[1]) > Math.max(y0, yT) || Math.abs(p[0] - xg) >= 12;
+      }));
+      const xg = [0, 12, -12].map(dx => base + dx).find(clear);
+      const pts = [[x, y0], [xg == null ? base : xg, y0], [xg == null ? base : xg, yT], [t.cx, yT], [t.cx, down ? t.y : t.y + t.h]];
+      G.reads.push({ id: 'r' + i, from: r.from, to: r.to, pts, d: roundedPath(pts, 8), len: polyLen(pts) });
+    });
+
     /* 出口（判断的另一支，指向文字说明） */
     Object.keys(stubFrom).forEach(id => {
       const d = G.nodes[id];
@@ -467,6 +524,6 @@ SV.mod.layout = function (SV) {
   }
 
   SV.layout = layout;
-  SV.layoutUtil = { measure, fit, wrap, K, FONT, MONO, roundedPath, polyLen, clearCache: () => cache.clear() };
+  SV.layoutUtil = { measure, fit, wrap, shortFile, K, FONT, MONO, roundedPath, polyLen, clearCache: () => cache.clear() };
 };
 SV.mod.layout(SV);

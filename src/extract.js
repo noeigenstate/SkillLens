@@ -35,13 +35,14 @@ SV.mod.extract = function (SV) {
     return m ? m[1].trim() : '';
   };
 
-  const NUM_RE = /^\s*(?:(?:step|phase|stage|part)\s*\d+\s*[:：.)\-–—]?\s*|第\s*[0-9一二三四五六七八九十]+\s*[步章节阶段部分]\s*[:：.、\-–—]?\s*|\d{1,2}(?:\.\d+)*\s*[.)、:：]\s*|\d{1,2}\s+(?=\S))/i;
+  const NUM_RE = /^\s*(?:(?:step|phase|stage|part)\s*\d+(?:\.\d+)*\s*[:：.)\-–—]?\s*|第\s*[0-9一二三四五六七八九十]+\s*[步章节阶段部分]\s*[:：.、\-–—]?\s*|\d{1,2}(?:\.\d+)*(?:\s*[.)、:：]\s*|\s+(?=\S)))/i;
   const stripNum = t => { const s = t.replace(NUM_RE, '').trim(); return s || t; };
-  const numOf = t => {
-    const m = String(t).match(/^\s*(?:(?:step|phase|stage|part)\s*(\d+)|第\s*([0-9一二三四五六七八九十]+)|(\d{1,2}))/i);
+  const numTextOf = t => {
+    const m = String(t).match(/^\s*(?:(?:step|phase|stage|part)\s*(\d+(?:\.\d+)*)|第\s*([0-9一二三四五六七八九十]+)|(\d{1,2}(?:\.\d+)*))/i);
     if (!m) return null;
-    return cnNum(m[1] || m[2] || m[3]);
+    return m[1] || m[3] || String(cnNum(m[2]));
   };
+  const numOf = t => { const n = numTextOf(t); return n == null ? null : cnNum(n.split('.')[0]); };
   function cnNum(s) {
     if (/^\d+$/.test(s)) return +s;
     const map = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
@@ -49,6 +50,23 @@ SV.mod.extract = function (SV) {
     if (s[0] === '十') return 10 + (map[s[1]] || 0);
     if (s[1] === '十') return map[s[0]] * 10 + (map[s[2]] || 0);
     return null;
+  }
+
+  /* 参考表里的步骤编号：小节保留原样，整数区间展开 */
+  function stepRefs(text) {
+    const n = '\\d+(?:\\.\\d+)*', span = n + '(?:\\s*(?:[-–—]|to)\\s*' + n + ')?';
+    const list = span + '(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+|&|、)\\s*' + span + ')*';
+    const re = new RegExp('\\b(?:steps?|phase)\\s*(' + list + ')|第\\s*(' + list + ')\\s*步|步骤\\s*(' + list + ')', 'gi');
+    const out = [];
+    for (const m of text.matchAll(re)) {
+      const parts = (m[1] || m[2] || m[3]).match(new RegExp(span, 'gi')) || [];
+      parts.forEach(p => {
+        const range = p.match(/^(\d+)\s*(?:[-–—]|to)\s*(\d+)$/i);
+        if (range) { for (let i = +range[1]; i <= +range[2]; i++) out.push(String(i)); }
+        else out.push(p.trim());
+      });
+    }
+    return [...new Set(out)];
   }
 
   const RE_TRIGGER = /(when (not )?to use|use this skill|何时(不)?(使用|用)|什么时候|触发|适用(场景|范围)?|使用场景|trigger)/i;
@@ -119,6 +137,10 @@ SV.mod.extract = function (SV) {
   }
 
   const firstCode = s => { const m = String(s || '').match(/`([^`\n]{1,40})`/); return m ? m[1].trim() : ''; };
+  const pathParts = s => {
+    const parts = s.split(/\s+\+\s+/);
+    return parts.every(p => p && !/\s/.test(p) && (/\//.test(p) || /\.[a-z0-9]+$/i.test(p))) ? parts : null;
+  };
 
   /* 一条文字 → 标题 + 说明 */
   function splitLead(text) {
@@ -199,6 +221,8 @@ SV.mod.extract = function (SV) {
     const nid = () => 'n' + (++seq);
     const lanes = [];
     const edges = [];
+    const reads = [];
+    const refSteps = new Map();
     const stubs = [];
     const notes = [];
     let triggerText = '';
@@ -206,7 +230,7 @@ SV.mod.extract = function (SV) {
 
     /* 条目 → 节点 */
     function nodeFrom(item, ctx) {
-      let title, rest, detail, tag = '', number = item.number || null, raw = '';
+      let title, rest, detail, tag = '', number = item.number == null ? null : item.number, raw = '';
       if (item.kind === 'sub') {
         const plain = md.strip(item.title);
         title = stripNum(plain);
@@ -229,7 +253,9 @@ SV.mod.extract = function (SV) {
         raw = plain + ' ' + md.blocksToText(item.blocks);
         if (number == null) number = numOf(plain);
       } else {
-        const sl = splitLead(item.text);
+        const plain = md.strip(item.text);
+        const lead = ctx.kind === 'ref' && plain.match(/^(\S+(?:\s+\+\s+\S+)*?)\s*[:：]\s+([\s\S]*)$/);
+        const sl = ctx.kind === 'ref' && pathParts(plain) ? { title: plain, rest: '' } : lead && pathParts(lead[1]) ? { title: lead[1], rest: lead[2] } : splitLead(item.text);
         title = sl.title;
         rest = sl.rest;
         detail = item.text + (item.blocks && item.blocks.length ? '\n\n' + md.blocksToMd(item.blocks) : '');
@@ -241,10 +267,23 @@ SV.mod.extract = function (SV) {
       if (RE_OPT.test(title)) { optional = true; title = title.replace(RE_OPT, '').trim(); }
       if (/[(（](optional|可选)[)）]/i.test(title)) { optional = true; title = title.replace(/\s*[(（](optional|可选)[)）]/i, '').trim(); }
       const node = { id: nid(), type: 'step', title, lines: rest, tag: '', icon: '', detail, number, optional };
+      if (ctx.kind === 'flow') node.numText = item.kind === 'sub' || item.kind === 'section' ? numTextOf(md.strip(item.title)) : number == null ? null : String(number);
       if (tag && units(tag) <= 18 && tag !== title) node.tag = tag;
       else if (optional) node.tag = L.optional;
       else if (ctx.ordered && number != null && ctx.kind !== 'ref') node.tag = T('x.stepTag', number);
       if (optional && node.tag !== L.optional) node.tag = L.optional;
+      if (ctx.kind === 'ref') {
+        const steps = stepRefs(title + '\n' + rest);
+        refSteps.set(node.id, steps);
+        const paths = pathParts(title);
+        if (paths) {
+          node.path = title;
+          node.title = paths.map(p => p.replace(/\/$/, '').split('/').pop() + (p.endsWith('/') ? '/' : '')).join(' + ');
+        }
+        if (steps.length) {
+          node.lines = rest.replace(/^\s*(?:Step\s*\d+(?:\.\d+)*(?:\s*(?:[-–—]|to)\s*\d+(?:\.\d+)*)?|第\s*\d+(?:\.\d+)*(?:\s*[-–—]\s*\d+)?\s*步)\s*[:：]\s*/i, '');
+        }
+      }
       node.icon = pickIcon(title, rest, ctx.kind === 'ref' ? 'book-open' : 'circle-dot');
 
       if (item.kind === 'rule' || (ctx.kind !== 'ref' && RE_COND.test(title))) {
@@ -276,6 +315,12 @@ SV.mod.extract = function (SV) {
         lines: rest.map(n => n.title).join(' · '),
         detail: rest.map(n => n.detail).join('\n\n---\n\n'), more: true,
       });
+      const more = keep[keep.length - 1];
+      if (ctx.kind === 'flow') more.numText = null;
+      if (ctx.kind === 'ref') {
+        const steps = [...new Set(rest.flatMap(n => refSteps.get(n.id) || []))];
+        refSteps.set(more.id, steps);
+      }
       return keep;
     }
 
@@ -402,6 +447,12 @@ SV.mod.extract = function (SV) {
     } : null;
     const chain = [];
     flowLanes.forEach(l => l.nodes.forEach(n => chain.push(n)));
+    lanes.filter(l => l.kind === 'ref').forEach(l => l.nodes.forEach(n => {
+      (refSteps.get(n.id) || []).forEach(label => {
+        const step = chain.find(s => s.numText === label) || chain.find(s => s.number === numOf(label) && s.numText != null && !s.numText.includes('.'));
+        if (step && !reads.some(r => r.from === step.id && r.to === n.id)) reads.push({ from: step.id, to: n.id });
+      });
+    }));
     if (trigger && chain.length) edges.push({ from: 'start', to: chain[0].id, kind: 'flow' });
     for (let i = 0; i + 1 < chain.length; i++) {
       const a = chain[i], b = chain[i + 1];
@@ -432,7 +483,7 @@ SV.mod.extract = function (SV) {
       window: `skills / ${name} / SKILL.md`,
       hero: { title: h1 && h1 !== name ? name : T('hero.default'), sub: '' },
       footer: T('footer.auto'),
-      trigger, lanes, edges, stubs,
+      trigger, lanes, edges, reads, stubs,
       stats: { lanes: lanes.length, steps: chain.length, nodes: lanes.reduce((a, l) => a + l.nodes.length, 0) + (trigger ? 1 : 0) },
     };
   }

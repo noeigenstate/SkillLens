@@ -83,6 +83,7 @@ When a SKILL.md contains a ` ```skillflow ` block, SkillLens draws only that. Th
 | `decide id: Question? [subtitle]` | a decision diamond |
 | `note: text` | a note inside the lane |
 | `a -> b -> c : label` under `flow:` | forward lines; `~>` is a dashed loop; `a -> "text" : Yes` is an exit pointing at a short text |
+| `a .> b` under `flow:` | step a reads reference b |
 
 Without `flow:`, the cards of non-ref lanes are chained in order. Icons are [Lucide](https://lucide.dev) names, listed in `src/icons.js`; to add one, copy its SVG body from lucide-static.
 

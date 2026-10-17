@@ -25,7 +25,7 @@ SV.mod.dsl = function (SV) {
 
   function parse(src, ctx) {
     ctx = ctx || {};
-    const spec = { title: '', subtitle: '', window: '', footer: '', hero: null, trigger: null, lanes: [], edges: [], stubs: [], warnings: [] };
+    const spec = { title: '', subtitle: '', window: '', footer: '', hero: null, trigger: null, lanes: [], edges: [], reads: [], stubs: [], warnings: [] };
     const nodes = {};
     let auto = 0;
     const lines = String(src || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n');
@@ -94,7 +94,7 @@ SV.mod.dsl = function (SV) {
         lane.nodes.push(node);
         continue;
       }
-      if (/->|~>|=>/.test(line)) { parseEdgeLine(line, spec); hasFlow = true; continue; }
+      if (/->|~>|=>|\.>/.test(line)) { parseEdgeLine(line, spec); hasFlow = true; continue; }
       spec.warnings.push(`第 ${li + 1} 行没看懂：${line}`);
     }
 
@@ -111,6 +111,12 @@ SV.mod.dsl = function (SV) {
     });
     spec.edges.filter(e => e.stub).forEach(e => spec.stubs.push({ from: e.from, text: e.stub, label: e.label || '' }));
     spec.edges = spec.edges.filter(e => !e.stub);
+    spec.reads = spec.reads.filter(e => {
+      const ok = nodes[e.from] && nodes[e.to];
+      if (!ok) spec.warnings.push(`连线 ${e.from} → ${e.to} 引用了不存在的节点`);
+      return ok;
+    });
+    spec.lanes.filter(l => l.kind === 'flow' || l.kind === 'bare').forEach(l => l.nodes.forEach(n => { n.numText = null; }));
 
     const anyTerminal = Object.values(nodes).some(n => n.terminal);
     if (!anyTerminal) {
@@ -130,15 +136,16 @@ SV.mod.dsl = function (SV) {
     return spec;
   }
 
-  /* a -> b -> c : 标签   a ~> b   a -> "出口说明" */
+  /* a -> b -> c : 标签   a ~> b   a .> b   a -> "出口说明" */
   function parseEdgeLine(line, spec) {
     let label = '';
     const lm = line.match(/^(.*?)(?:\s+:\s+|\s*：\s*)([^"]*)$/);
     let body = line;
-    if (lm && /->|~>|=>/.test(lm[1])) { body = lm[1]; label = lm[2].trim(); }
-    const parts = body.split(/\s*(->|~>|=>)\s*/);
+    if (lm && /->|~>|=>|\.>/.test(lm[1])) { body = lm[1]; label = lm[2].trim(); }
+    const parts = body.split(/\s*(->|~>|=>|\.>)\s*/);
     for (let i = 0; i + 2 < parts.length; i += 2) {
       const from = parts[i].trim(), arrow = parts[i + 1], to = parts[i + 2].trim();
+      if (arrow === '.>') { spec.reads.push({ from, to }); continue; }
       const e = { from, kind: arrow === '~>' ? 'loop' : 'flow', label };
       const q = to.match(/^["“](.*)["”]$/);
       if (q) e.stub = q[1]; else e.to = to;
@@ -182,6 +189,7 @@ SV.mod.dsl = function (SV) {
     out.push('flow:');
     for (const e of spec.edges) out.push(`  ${e.from} ${e.kind === 'loop' ? '~>' : '->'} ${e.to}${e.label ? ' : ' + e.label : ''}`);
     for (const s of spec.stubs || []) out.push(`  ${s.from} -> "${s.text}"${s.label ? ' : ' + s.label : ''}`);
+    for (const r of spec.reads || []) out.push(`  ${r.from} .> ${r.to}`);
     return out.join('\n');
   }
 

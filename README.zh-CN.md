@@ -109,6 +109,7 @@ flowchart LR
 2. 判断用「如果…」开头；`如果 X，就做 Y` 会画成带出口的菱形。
 3. 回环写成「回到第 N 步，直到…」。
 4. 规则放在 `## 注意`，背景资料放在 `## 参考`。
+5. 参考资料表里写明每份文件在哪一步读（`Step 3: …` 或「第 3 步：…」）。文件卡片上会标出读它的步骤编号，播放到那一步时，会有一条点线从这一步连到它要读的文件。`skillflow` 代码块里写 `步骤 .> 文件`。
 
 要精确控制，就加一个 `skillflow` 代码块。最快的办法：在「结构」面板里改好，点「复制为代码块」。完整语法见 [skills/skilllens/SKILL.md](skills/skilllens/SKILL.md)，[examples/review-loop](examples/review-loop/SKILL.md) 用到了全部元素。
 

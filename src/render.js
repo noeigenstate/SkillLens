@@ -7,7 +7,7 @@ SV.mod.render = function (SV) {
     blueprint: {
       blueprint: true, page: '#071e32', pageTo: '', grid: '#123b54', ruler: '#0a2740', path: '#5f86a3',
       text: '#e6f5ff', text2: '#8fafc6', text3: '#5d7f99', edge: '#3f8fb2', label: '#cfe9f7',
-      comet: '#48edff', dotCore: '#e8fdff', loopDot: '#ffbe57', note: '#ffbe57', active: '#ffbe57', termIcon: '#071e32',
+      comet: '#48edff', dotCore: '#e8fdff', loopDot: '#ffbe57', note: '#ffbe57', reads: '#cfe9f7', active: '#ffbe57', termIcon: '#071e32',
       tagBg: 'rgba(99,217,245,0.12)', tagText: '#7fd3ec', rCard: 8, rLane: 12, shadow: false,
       lanes: {
         green: { accent: '#63d9f5', stroke: '#2d7fa3', fill: 'rgba(9,40,64,0.72)', card: '#0e3049', cardStroke: 'rgba(99,217,245,0.7)', icon: '#0b2a42' },
@@ -22,7 +22,7 @@ SV.mod.render = function (SV) {
     dark: {
       page: '#0b0d12', pageTo: '', dots: '#2a3140', path: '#6b7488',
       text: '#eef1f8', text2: '#929caf', text3: '#5f687a', edge: '#5d6577', label: '#c3c9d6',
-      comet: '#8fffd0', dotCore: '#e9fff6', loopDot: '#f5c470', note: '#7ae8bc', termIcon: '#0b0d12',
+      comet: '#8fffd0', dotCore: '#e9fff6', loopDot: '#f5c470', note: '#7ae8bc', reads: '#a9adff', termIcon: '#0b0d12',
       tagBg: 'rgba(146,156,175,0.12)', tagText: '#9aa4b8', rCard: 12, rLane: 18, shadow: false,
       lanes: {
         green: { accent: '#7ae8bc', stroke: '#2b5a4a', fill: '#0d1714', card: '#121b1a', cardStroke: '#253633', icon: '#14302a' },
@@ -37,7 +37,7 @@ SV.mod.render = function (SV) {
     light: {
       page: '#eee9fc', pageTo: '#e6f5ef', dots: '#cfc8e6', path: '#8a93a6',
       text: '#283449', text2: '#66728a', text3: '#9aa3b5', edge: '#a2abbd', label: '#4a5568',
-      comet: '#2fc28e', dotCore: '#ffffff', loopDot: '#e0a12e', note: '#3fa57f', termIcon: '#ffffff',
+      comet: '#2fc28e', dotCore: '#ffffff', loopDot: '#e0a12e', note: '#3fa57f', reads: '#7c63d6', termIcon: '#ffffff',
       tagBg: 'rgba(124,135,155,0.12)', tagText: '#7c879b', rCard: 16, rLane: 22, shadow: true,
       lanes: {
         green: { accent: '#2f9d76', stroke: '#c4ebdb', fill: 'rgba(233,248,241,0.86)', card: '#ffffff', cardStroke: '#e3f1ea', icon: '#dcf4ea' },
@@ -72,6 +72,8 @@ SV.mod.render = function (SV) {
     const K = G.K;
     const W = G.W, H = G.H;
     const pal = c => P.lanes[c] || P.lanes.slate;
+    const reads = G.reads || [], readers = {};
+    reads.forEach(r => { const ids = readers[r.to] = readers[r.to] || []; if (!ids.includes(r.from)) ids.push(r.from); });
     const out = [];
     out.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family='${G.FONT}' class="sv-svg" data-theme="${opt.theme || 'dark'}">`);
     out.push(`<defs>
@@ -119,8 +121,9 @@ SV.mod.render = function (SV) {
         const y = G.legend.y;
         if (it.kind === 'solid') out.push(`<line x1="${f1(it.x)}" y1="${f1(y)}" x2="${f1(it.x + 38)}" y2="${f1(y)}" stroke="${P.edge}" stroke-width="1.6"/>`);
         else if (it.kind === 'dashed') out.push(`<line x1="${f1(it.x)}" y1="${f1(y)}" x2="${f1(it.x + 38)}" y2="${f1(y)}" stroke="${P.edge}" stroke-width="1.6" stroke-dasharray="11 8"/>`);
+        else if (it.kind === 'reads') out.push(`<line x1="${f1(it.x)}" y1="${f1(y)}" x2="${f1(it.x + 38)}" y2="${f1(y)}" stroke="${P.reads}" stroke-width="${P === THEMES.dark ? '2.0' : '1.8'}" stroke-dasharray="0.1 6" stroke-linecap="round"/><circle cx="${f1(it.x + 38)}" cy="${f1(y)}" r="2.8" fill="${P.reads}"/>`);
         else out.push(`<circle cx="${f1(it.x + 8)}" cy="${f1(y)}" r="12" fill="url(#sv-glow)" opacity="0.6"/><circle cx="${f1(it.x + 8)}" cy="${f1(y)}" r="4.5" fill="${P.dotCore}" stroke="${P.comet}" stroke-width="2"/>`);
-        out.push(txt(it.x + (it.kind === 'dot' ? 36 : 48), y + 5.5, it.text, `font-size="15.5" fill="${P.text2}"`));
+        out.push(txt(it.x + (!reads.length && it.kind === 'dot' ? 36 : 48), y + 5.5, it.text, `font-size="15.5" fill="${P.text2}"`));
       }
     }
 
@@ -155,6 +158,20 @@ SV.mod.render = function (SV) {
     }
 
     // 连线
+    // 标签及出口外扩 4px 后挖空，旋转标签沿用自己的局部坐标
+    const labels = G.edges.map(e => e.lab).concat(G.stubs.map(s => s.lab)).filter(Boolean);
+    const holes = reads.length ? labels.map(lab => {
+      const w = lab.w || SV.layoutUtil.measure(lab.text, 13);
+      if (lab.rotate) return `<g transform="translate(${f1(lab.x)},${f1(lab.y)}) rotate(${lab.rotate})"><rect x="${f1(-w / 2 - 10)}" y="-14" width="${f1(w + 20)}" height="28" fill="black"/></g>`;
+      const x = lab.anchor === 'start' ? lab.x - 3 : lab.anchor === 'end' ? lab.x - w - 5 : lab.x - w / 2 - 4;
+      return `<rect x="${f1(x - 4)}" y="${f1(lab.y - 17)}" width="${f1(w + 16)}" height="26" fill="black"/>`;
+    }).concat(G.stubs.map(s => `<rect x="${f1(s.x - 4)}" y="${f1(s.y - 4)}" width="${f1(s.w + 8)}" height="${s.h + 8}" fill="black"/>`)).join('') : '';
+    out.push('<g class="sv-reads" pointer-events="none">');
+    for (const r of reads) {
+      out.push(`<mask id="sv-read-mask-${r.id}" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><path data-reveal="${r.id}" d="${r.d}" pathLength="${r.len}" fill="none" stroke="white" stroke-width="5" stroke-linecap="round" stroke-dasharray="${r.len} ${r.len}" stroke-dashoffset="${r.len}"/>${holes}</mask>`);
+      out.push(`<path d="${r.d}" fill="none" stroke="${P.reads}" stroke-width="${P === THEMES.dark ? '2.0' : '1.8'}" stroke-dasharray="0.1 6" stroke-linecap="round" mask="url(#sv-read-mask-${r.id})" opacity="0" data-read="${r.id}"/>`);
+    }
+    out.push('</g>');
     out.push('<g class="sv-edges">');
     for (const e of G.edges) {
       out.push(`<path d="${e.d}" fill="none" stroke="${P.edge}" stroke-width="1.5"${e.kind === 'loop' ? ' stroke-dasharray="9 7"' : ''} marker-end="url(#sv-arw)" data-edge="${e.id}"/>`);
@@ -170,14 +187,14 @@ SV.mod.render = function (SV) {
 
     // 连线标签
     const yn = s => (s === 'Yes' ? SV.i18n.t('label.yes') : s === 'No' ? SV.i18n.t('label.no') : s);
-    for (const lab of G.edges.map(e => e.lab).concat(G.stubs.map(s => s.lab)).filter(Boolean)) {
+    for (const lab of labels) {
       const bg = bgColor(P, lab.bg || G.bgAt(lab.x, lab.y));
       const w = lab.w || SV.layoutUtil.measure(lab.text, 13);
       if (lab.rotate) {
         out.push(`<g transform="translate(${f1(lab.x)},${f1(lab.y)}) rotate(${lab.rotate})"><rect x="${f1(-w / 2 - 6)}" y="-10" width="${f1(w + 12)}" height="20" fill="${bg}"/>${txt(0, 5, yn(lab.text), `text-anchor="middle" font-size="13.5" fill="${P.label}"`)}</g>`);
       } else {
         const x0 = lab.anchor === 'start' ? lab.x - 3 : lab.anchor === 'end' ? lab.x - w - 5 : lab.x - w / 2 - 4;
-        out.push(`<rect x="${f1(x0)}" y="${f1(lab.y - 13)}" width="${f1(w + 8)}" height="18" rx="3" fill="${bg}" opacity="0.92"/>`);
+        out.push(`<rect x="${f1(x0)}" y="${f1(lab.y - 13)}" width="${f1(w + 8)}" height="18" rx="3" fill="${bg}" opacity="${reads.length ? 1 : 0.92}"/>`);
         out.push(txt(lab.x, lab.y, yn(lab.text), `text-anchor="${lab.anchor}" font-size="13" fill="${P.label}"`));
       }
     }
@@ -224,7 +241,7 @@ SV.mod.render = function (SV) {
         out.push(`<g class="sv-hl" opacity="0"><rect x="${f1(n.x)}" y="${f1(n.y)}" width="${n.w}" height="${n.h}" rx="${rc + 2}" fill="${act}" opacity="${P.shadow ? 0.28 : 0.18}" filter="url(#sv-blur)"/><rect x="${f1(n.x - 5)}" y="${f1(n.y - 5)}" width="${n.w + 10}" height="${n.h + 10}" rx="${rc + 4}" fill="none" stroke="${act}" stroke-width="1.2" opacity="0.5"/></g>`);
         out.push(`<rect class="sv-shape" x="${f1(n.x)}" y="${f1(n.y)}" width="${n.w}" height="${n.h}" rx="${rc}" fill="${c.card}" stroke="${c.cardStroke}" stroke-width="1.2"${dash}${P.shadow ? ' filter="url(#sv-shadow)"' : ''}/>`);
         out.push(`<rect class="sv-hl" x="${f1(n.x)}" y="${f1(n.y)}" width="${n.w}" height="${n.h}" rx="${rc}" fill="none" stroke="${act}" stroke-width="2" opacity="0"${dash}/>`);
-        if (BP && nodeNo[n.id]) out.push(txt(n.x + n.w - 9, n.y + n.h - 8, String(nodeNo[n.id]).padStart(2, '0'), `text-anchor="end" font-family='${G.MONO}' font-size="10" fill="${P.text3}"`));
+        if (BP && nodeNo[n.id] || !BP && reads.length && ['flow', 'bare'].includes(n.laneKind)) out.push(txt(n.x + n.w - 9, n.y + n.h - 8, String(nodeNo[n.id]).padStart(2, '0'), `text-anchor="end" font-family='${G.MONO}' font-size="10" fill="${BP ? P.text3 : P.text2}"${BP ? '' : ' opacity="0.75" data-card-no="' + esc(n.id) + '"'}`));
         const ib = 52, ix = n.x + 12, iy = n.cy - ib / 2;
         if (n.terminal) {
           out.push(`<rect x="${f1(ix)}" y="${f1(iy)}" width="${ib}" height="${ib}" rx="11" fill="${c.accent}"/>`);
@@ -249,9 +266,35 @@ SV.mod.render = function (SV) {
         else if (n.tagBelow) pill(tx, top + titleH + 12);
         n.body.forEach((l, i) => out.push(txt(tx, top + titleH + tagH + 8 + 15 + i * 21, l, `font-size="14" fill="${P.text2}"`)));
       }
+      // 阅读目标只用内描边和轻洗色，不借用步骤的模糊光晕
+      const shape = (attrs, inset) => n.type === 'decision'
+        ? `<polygon points="${n.cx},${n.y + inset} ${n.x + n.w - inset},${n.cy} ${n.cx},${n.y + n.h - inset} ${n.x + inset},${n.cy}" ${attrs}/>`
+        : `<rect x="${f1(n.x + inset)}" y="${f1(n.y + inset)}" width="${n.w - inset * 2}" height="${n.h - inset * 2}" rx="${P.rCard}" ${attrs}/>`;
+      if (readers[n.id]) out.push(`<g class="sv-read-hl" opacity="0">${shape(`fill="${P.reads}" opacity="${BP ? 0.08 : P.shadow ? 0.10 : 0.07}"`, 0)}${shape(`fill="none" stroke="${P.reads}" stroke-width="1.6" opacity="0.9"`, 1)}</g>`);
+      if (reads.some(r => r.from === n.id)) out.push(shape(`class="sv-reader-ring" fill="none" stroke="${P.reads}" stroke-width="1.4" opacity="0"`, -2));
+      if (reads.length && n.type === 'decision' && ['flow', 'bare'].includes(n.laneKind)) out.push(txt(n.x + n.w - 9, n.y + n.h - 8, String(nodeNo[n.id]).padStart(2, '0'), `text-anchor="end" font-family='${G.MONO}' font-size="10" fill="${BP ? P.text3 : P.text2}" opacity="${BP ? 0.6 : 0.75}" data-card-no="${esc(n.id)}"`));
+      if (n.laneKind === 'ref' && readers[n.id]) {
+        const ids = readers[n.id].slice().sort((a, b) => nodeNo[a] - nodeNo[b]), shown = ids.slice(0, 3);
+        const suffix = ids.length > 3 ? ' +' + (ids.length - 3) : '';
+        const label = '← ' + shown.map(id => String(nodeNo[id]).padStart(2, '0')).join('·') + suffix;
+        const x = n.x + 75, y = n.y + n.h - 11, w = SV.layoutUtil.measure(label, 10.5, 500, G.MONO) + 12;
+        const box = fill => `<rect x="${f1(x)}" y="${f1(y - 11.5)}" width="${f1(w)}" height="16" rx="5" ${fill}/>`;
+        const spans = shown.map((id, i) => `${i ? '·' : ''}<tspan data-reader="${esc(id)}" font-weight="500">${String(nodeNo[id]).padStart(2, '0')}</tspan>`).join('');
+        const attrs = `font-family='${G.MONO}' font-size="10.5" font-weight="500"`;
+        out.push(`<g class="sv-read-chip">${box(`fill="${P.tagBg}"`)}${txt(x + 6, y, label, `${attrs} fill="${P.tagText}"`)}</g>`);
+        out.push(`<g class="sv-read-chip-lit" opacity="0">${box(`fill="${P.reads}" opacity="0.16"`)}<text x="${f1(x + 6)}" y="${f1(y)}" ${attrs} fill="${P.reads}">← ${spans}${suffix}</text></g>`);
+      }
       out.push('</g>');
     }
     out.push('</g>');
+
+    // 端点画在卡片之上，避免边缘圆点被卡片填色裁掉
+    for (const r of reads) {
+      const a = r.pts[0], b = r.pts[r.pts.length - 1], s = G.nodes[r.from];
+      const c = pal(s.type === 'trigger' ? trigColor : s.color);
+      out.push(`<circle data-read-origin="${r.id}" cx="${a[0]}" cy="${a[1]}" r="3" fill="${c.card}" stroke="${P.reads}" stroke-width="1.2" opacity="0" pointer-events="none"/>`);
+      out.push(`<circle data-read-end="${r.id}" cx="${b[0]}" cy="${b[1]}" r="2.8" fill="${P.reads}" opacity="0" pointer-events="none"/><circle data-read-pulse="${r.id}" cx="${b[0]}" cy="${b[1]}" r="2.8" fill="none" stroke="${P.reads}" stroke-width="1.2" opacity="0" pointer-events="none"/>`);
+    }
 
     // 流动层
     out.push('<g class="sv-flow" pointer-events="none">');
@@ -361,9 +404,16 @@ SV.mod.render = function (SV) {
   function createPlayer(svg, G, opt) {
     opt = opt || {};
     const tour = buildTour(G);
-    const nodeEls = {}, stubEls = {};
-    svg.querySelectorAll('.sv-node').forEach(el => { nodeEls[el.getAttribute('data-node')] = Array.from(el.querySelectorAll('.sv-hl')); });
+    const nodeEls = {}, stubEls = {}, cards = {};
+    svg.querySelectorAll('.sv-node').forEach(el => {
+      const id = el.getAttribute('data-node');
+      nodeEls[id] = Array.from(el.querySelectorAll('.sv-hl'));
+      cards[id] = { el, hl: el.querySelector('.sv-read-hl'), chip: el.querySelector('.sv-read-chip-lit'), ring: el.querySelector('.sv-reader-ring'), nums: Array.from(el.querySelectorAll('[data-reader]')) };
+    });
     svg.querySelectorAll('.sv-stub').forEach(el => { stubEls[el.getAttribute('data-stub')] = Array.from(el.querySelectorAll('.sv-hl')); });
+    const readIndex = {};
+    const reads = (G.reads || []).map(r => ({ r, index: readIndex[r.from] = (readIndex[r.from] == null ? 0 : readIndex[r.from] + 1),
+      el: svg.querySelector(`[data-read="${r.id}"]`), mask: svg.querySelector(`[data-reveal="${r.id}"]`), origin: svg.querySelector(`[data-read-origin="${r.id}"]`), end: svg.querySelector(`[data-read-end="${r.id}"]`), pulse: svg.querySelector(`[data-read-pulse="${r.id}"]`) }));
     const comets = G.edges.map(e => {
       const g = svg.querySelector(`[data-comet="${e.id}"]`);
       const len = e.len;
@@ -372,6 +422,7 @@ SV.mod.render = function (SV) {
       const period = Math.max(len + (loop ? 120 : 170), 300) / speed;
       return { e, els: g ? Array.from(g.children) : [], at: sampler(e.pts), len, speed, period, phase: hash(e.id) * period, loop };
     });
+    const traveler = svg.querySelector('.sv-traveler');
     const trav = Array.from(svg.querySelectorAll('.sv-traveler circle'));
     const travSamplers = {};
     G.edges.forEach(e => { travSamplers[e.id] = sampler(e.pts); });
@@ -383,8 +434,17 @@ SV.mod.render = function (SV) {
     const laneOf = id => { const n = G.nodes[id]; return n && n.lane >= 0 ? G.lanes[n.lane] : null; };
 
     let t = 0, playing = opt.autoplay !== false, speed = 1, raf = 0, last = 0;
-    let lastAlpha = {};
     let lastHero = '';
+    let pin = null, hover = null, hoverLevel = 1, preview = null;
+    // 同一时间重复渲染不依赖上一帧；只缓存相同属性值的写入
+    const attrs = new WeakMap();
+    const attr = (el, key, value) => {
+      if (!el) return;
+      let a = attrs.get(el); if (!a) attrs.set(el, a = {});
+      value = String(value);
+      if (a[key] !== value) { el.setAttribute(key, value); a[key] = value; }
+    };
+    const clamp = x => Math.max(0, Math.min(1, x));
     const listeners = [];
 
     function segAt(tt) {
@@ -396,21 +456,64 @@ SV.mod.render = function (SV) {
     }
 
     function setAlpha(map) {
-      const keys = new Set(Object.keys(map).concat(Object.keys(lastAlpha)));
-      keys.forEach(k => {
+      Object.keys(nodeEls).concat(Object.keys(stubEls)).forEach(k => {
         const a = map[k] || 0;
-        if (Math.abs((lastAlpha[k] || 0) - a) < 0.004) return;
         const els = nodeEls[k] || stubEls[k];
-        if (els) els.forEach(el => el.setAttribute('opacity', a.toFixed(3)));
+        if (els) els.forEach(el => attr(el, 'opacity', a.toFixed(3)));
       });
-      lastAlpha = map;
+    }
+
+    function renderReads(alpha, lit, tt, lt) {
+      if (!reads.length) return;
+      const targets = {}, chips = {}, activeReaders = {}, rings = {}, pinnedTargets = new Set();
+      reads.forEach(read => {
+        const { r } = read, s = lit[r.from];
+        const age = s ? +(lt - s.t0).toFixed(9) : 0, arrival = 0.3 + Math.min(0.2, read.index * 0.05);
+        const pinned = !!pin && (pin.step === r.from || pin.ref === r.to);
+        if (pinned) { pinnedTargets.add(r.to); if (pin.ref) rings[r.from] = 0.6; }
+        const previewed = !pin && preview === r.from;
+        const hovered = hover === r.id;
+        let glow = alpha[r.from] || 0, reveal = s ? 1 - Math.pow(1 - clamp(age / 0.3), 3) : 0;
+        let target = glow * clamp((age - arrival) / 0.15);
+        let phase = age;
+        if (pinned || hovered || previewed) {
+          glow = hovered ? hoverLevel : pinned ? (hover ? 0.25 : 1) : 0.4;
+          reveal = 1; target = glow; phase = tt;
+        }
+        attr(read.el, 'opacity', ((P === THEMES.dark ? 1 : 0.85) * glow).toFixed(3));
+        attr(read.el, 'stroke-dashoffset', (-10 * phase).toFixed(3));
+        attr(read.mask, 'stroke-dashoffset', (r.len * (1 - reveal)).toFixed(3));
+        attr(read.origin, 'opacity', glow.toFixed(3));
+        attr(read.end, 'opacity', (reveal >= 1 ? glow : 0).toFixed(3));
+        const pulse = clamp((age - 0.3) / 0.5);
+        attr(read.pulse, 'r', (2.8 + 4.2 * pulse).toFixed(3));
+        attr(read.pulse, 'opacity', (!pinned && !hovered && !previewed && s && age >= 0.3 && age < 0.8 ? 0.6 * (1 - pulse) * glow : 0).toFixed(3));
+        targets[r.to] = Math.max(targets[r.to] || 0, target);
+        chips[r.to] = Math.max(chips[r.to] || 0, glow);
+        if (glow > 0) (activeReaders[r.to] = activeReaders[r.to] || new Set()).add(r.from);
+      });
+      Object.keys(cards).forEach(id => {
+        const c = cards[id], n = G.nodes[id];
+        attr(c.hl, 'opacity', (targets[id] || 0).toFixed(3));
+        attr(c.chip, 'opacity', (chips[id] || 0).toFixed(3));
+        c.nums.forEach(el => attr(el, 'font-weight', activeReaders[id] && activeReaders[id].has(el.getAttribute('data-reader')) ? 700 : 500));
+        attr(c.ring, 'opacity', rings[id] || 0);
+        if (n.laneKind === 'ref') attr(c.el, 'opacity', pin && pin.ref !== id && !pinnedTargets.has(id) ? 0.45 : 1);
+      });
     }
 
     function hero(seg) {
-      if (!heroTitle || !tour) return;
+      if (!heroTitle) return;
       let title = '', sub = '';
       const T = (k, ...a) => SV.i18n.t(k, ...a);
-      if (!seg || seg.type === 'pause') {
+      if (!tour && !pin) { title = ''; sub = ''; }
+      else if (pin) {
+        const id = pin.step || pin.ref;
+        title = G.nodes[id].spec.title || '';
+        const related = (G.reads || []).filter(r => pin.step ? r.from === id : r.to === id);
+        const count = new Set(related.map(r => pin.step ? r.to : r.from)).size;
+        sub = T((pin.step ? 'hero.pinReads' : 'hero.pinUsed') + (count === 1 ? '1' : ''), count);
+      } else if (!seg || seg.type === 'pause') {
         title = (G.spec.hero && G.spec.hero.title) || G.spec.title || '';
         sub = (G.spec.hero && G.spec.hero.sub) || T('hero.roundEnd', seg ? seg.round + 1 : 1, tour.rounds);
       } else {
@@ -426,13 +529,14 @@ SV.mod.render = function (SV) {
           sub = [L ? L.title : T('hero.start'), T('hero.step', Math.min(seg.idx + 1, seg.total), seg.total), seg.round > 0 ? T('hero.branch', seg.round) : ''].filter(Boolean).join(' · ');
         }
       }
-      const key = title + '|' + sub + '|' + (seg ? seg.idx + ':' + seg.total : '');
+      attr(heroDots, 'opacity', pin ? 0 : 1);
+      const key = title + '|' + sub + '|' + (pin ? 'pin' : seg ? seg.idx + ':' + seg.total : '');
       if (key === lastHero) return;
       lastHero = key;
       const big = G.hero.place === 'lane';
       heroTitle.textContent = SV.layoutUtil.fit(title, G.hero.maxW, big ? 29 : 24, 800);
       heroSub.textContent = SV.layoutUtil.fit(sub, G.hero.maxW, big ? 16 : 14.5, 400);
-      const total = seg ? Math.min(seg.total, 18) : 0;
+      const total = !pin && seg ? Math.min(seg.total, 18) : 0;
       const cur = seg ? Math.min(seg.idx, total - 1) : -1;
       let h = '';
       for (let i = 0; i < total; i++) h += `<circle cx="${i * 23}" cy="0" r="${i === cur ? 5 : 4.5}" fill="${i === cur && seg.type !== 'pause' ? (P.active || P.comet) : P.text3}" opacity="${i === cur ? 1 : 0.55}"/>`;
@@ -468,24 +572,27 @@ SV.mod.render = function (SV) {
           }
         }
       }
-      if (!tour) return;
+      attr(traveler, 'opacity', pin ? 0 : 1);
+      if (!tour) { setAlpha(pin && pin.step ? { [pin.step]: 1 } : {}); renderReads({}, {}, tt, tt); hero(null); return; }
       const T = tour.duration;
       const lt = ((tt % T) + T) % T;
       const i = segAt(lt);
       const seg = tour.segs[i];
       // 高亮：当前节点亮起，刚离开的节点慢慢暗下去
-      const alpha = {};
+      const alpha = {}, lit = {};
       for (let j = Math.max(0, i - 4); j <= Math.min(tour.segs.length - 1, i + 1); j++) {
         const s = tour.segs[j];
         if (s.type !== 'node' && s.type !== 'stub') continue;
         let a = 0;
         if (lt >= s.t0 && lt < s.t1) a = Math.min(1, (lt - s.t0) / 0.22);
         else if (lt >= s.t1 && lt < s.t1 + 0.55) a = 1 - (lt - s.t1) / 0.55;
-        if (a > (alpha[s.id] || 0)) alpha[s.id] = a;
+        if (a > (alpha[s.id] || 0)) { alpha[s.id] = a; lit[s.id] = s; }
       }
-      setAlpha(alpha);
+      // 固定卡片接管高亮，阅读关系也不再跟随播放步骤
+      renderReads(pin ? {} : alpha, pin ? {} : lit, tt, lt);
+      setAlpha(pin ? (pin.step ? { [pin.step]: 1 } : {}) : alpha);
       // 走动的数据点
-      if (seg && (seg.type === 'edge' || seg.type === 'stubEdge')) {
+      if (!pin && seg && (seg.type === 'edge' || seg.type === 'stubEdge')) {
         const len = seg.type === 'edge' ? seg.edge.len : seg.stub.len;
         const at = travSamplers[seg.id];
         const p = ease((lt - seg.t0) / (seg.t1 - seg.t0));
@@ -496,7 +603,7 @@ SV.mod.render = function (SV) {
           el.setAttribute('cx', f1(q[0])); el.setAttribute('cy', f1(q[1]));
           el.setAttribute('opacity', ss >= 0 ? (k === 0 ? 0.95 : 1 - (k - 1) * 0.11).toFixed(2) : '0');
         });
-      } else trav.forEach(el => el.setAttribute('opacity', '0'));
+      } else trav.forEach(el => { el.setAttribute('opacity', '0'); el.setAttribute('cx', '0'); el.setAttribute('cy', '0'); });
       hero(seg);
       listeners.forEach(fn => fn(seg, lt));
     }
@@ -521,6 +628,9 @@ SV.mod.render = function (SV) {
       pause() { playing = false; },
       toggle() { playing = !playing; return playing; },
       setSpeed(v) { speed = v; },
+      setPin(v) { pin = v; hover = null; preview = null; renderAt(t); },
+      setHover(id, level) { hover = id; hoverLevel = level == null ? 1 : clamp(level); renderAt(t); },
+      setPreview(id) { preview = id; renderAt(t); },
       seek(v) { t = v; renderAt(t); },
       renderAt,
       next() {

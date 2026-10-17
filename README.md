@@ -105,6 +105,7 @@ Auto-extraction follows the structure of the file. These habits give the best ch
 2. Start decisions with "If …"; `If X, do Y` becomes a diamond with an exit.
 3. Write loops as "go back to step N until …".
 4. Keep rules under `## Rules` and background under `## Reference`.
+5. In a reference table, say when each file is read (`Step 3: …`). The file's card then shows which step cards read it, and during playback a dotted line runs from the lit step to the files it reads. In a `skillflow` block, write `step .> file`.
 
 For full control, add a `skillflow` block. The quickest way is to fix the chart in the **Structure** panel and click **Copy as code block**:
 
