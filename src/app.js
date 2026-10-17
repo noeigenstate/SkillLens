@@ -20,6 +20,7 @@
     zoom: 'fit', cols: +(params.get('cols') || store.get('cols', 4)), theme: params.get('theme') || store.get('theme2', 'blueprint'),
     speed: 1, playing: true, selected: null, collapsed: store.get('collapsed', {}), overrides: store.get('overrides', {}),
     query: '', server: false, panel: store.get('panel', true),
+    web: { q: '', items: null, busy: false, error: '' }, official: [], officialBusy: false,
     lang: params.get('lang') || store.get('lang', 'en'),
     translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, missing: 0, busy: false, error: '' }, showOrig: false,
   };
@@ -44,7 +45,10 @@
     renderList();
     if (state.currentId) select(state.currentId, true); else renderHeader();
   }
-  const groupName = s => s.groupKey ? t('group.' + s.groupKey) : (s.group || t('group.other'));
+  const groupName = s => s.groupKey ? t('group.' + s.groupKey, s.groupArg || '') : (s.group || t('group.other'));
+  const whereName = w => w.key ? t('group.' + w.key, w.arg || '') : (w.label || t('group.other'));
+  /* 量大的分组（官方库、插件市场、软件自带的）默认折叠 */
+  const FOLDED_KINDS = ['catalog', 'official'];
 
   /* —— 小工具 —— */
   let toastTimer = 0;
@@ -90,15 +94,22 @@
       } catch { /* 静态托管，没有接口 */ }
     }
     if (!data && window.SV_DATA) data = window.SV_DATA;
-    const list = [];
-    if (data && data.skills) data.skills.forEach(s => list.push(Object.assign({ source: 'scan' }, s)));
-    store.get('imported', []).forEach(s => list.push(Object.assign({}, s, { source: 'import', group: 'imported', groupKey: 'imported' })));
-    state.skills = list;
+    const scanned = data && data.skills ? data.skills.map(s => Object.assign({ source: 'scan' }, s)) : [];
+    // 顺序：本仓库 → 导入的 → 从网上取回的 → 各 agent / 项目 / 官方库 / 市场
+    const head = scanned.filter(s => s.kind === 'project' || !s.kind);
+    const tail = scanned.filter(s => !(s.kind === 'project' || !s.kind));
+    const imported = store.get('imported', []).map(s => Object.assign({}, s, { source: 'import', group: 'imported', groupKey: 'imported' }));
+    const online = store.get('online', []).map(s => Object.assign({}, s, { source: 'online', groupKey: 'online', kind: 'online' }));
+    state.skills = head.concat(imported, online, tail);
   }
 
   function saveImported() {
     const imp = state.skills.filter(s => s.source === 'import').map(s => ({ id: s.id, name: s.name, description: s.description, path: s.path, text: s.text }));
     if (!store.set('imported', imp)) toast(t('toast.tooBig'), 4000);
+  }
+  function saveOnline() {
+    const list = state.skills.filter(s => s.source === 'online').map(s => ({ id: s.id, name: s.name, description: s.description, path: s.path, text: s.text, url: s.url, files: s.files }));
+    if (!store.set('online', list)) toast(t('toast.tooBig'), 4000);
   }
 
   function addImported(items) {
@@ -172,35 +183,132 @@
     const hit = TR.cache[trKey(state.lang, d)];
     return hit != null ? hit : d;
   }
-  function askDescTranslations() {
+  /* 只翻译看得见的（展开的分组、搜索结果），上千条描述不会一次全送去翻译 */
+  function askDescTranslations(items) {
     if (descAsked || !state.translate) return;
     const lang = state.lang;
-    const miss = state.skills.map(s => s.description).filter(d => d && needsTr(d, lang) && TR.cache[trKey(lang, d)] == null);
+    const miss = items.map(s => s.description).filter(d => d && needsTr(d, lang) && TR.cache[trKey(lang, d)] == null);
     if (!miss.length) return;
     descAsked = true;
-    requestTr(miss, false, () => { if (state.lang === lang) { renderList(); renderDetail(); } }).finally(() => { descAsked = false; });
+    requestTr(miss.slice(0, 200), false, () => { if (state.lang === lang) { renderList(); renderDetail(); } }).finally(() => { descAsked = false; });
+  }
+
+  const isFolded = g => g.name in state.collapsed ? state.collapsed[g.name] : FOLDED_KINDS.includes(g.items[0].kind) || g.items[0].groupKey === 'agentBuiltin';
+
+  function itemHtml(s) {
+    const flow = /```\s*skillflow/.test(s.text || '');
+    const edited = !!state.overrides[s.id];
+    const also = s.alsoIn && s.alsoIn.length ? `<i class="badge also" title="${esc(t('list.alsoIn', s.alsoIn.map(whereName).join(t('list.sep'))))}">+${s.alsoIn.length}</i>` : '';
+    const removable = s.source === 'import' || s.source === 'online';
+    return `<button class="item${s.id === state.currentId ? ' active' : ''}" data-id="${esc(s.id)}" title="${esc(s.full || s.path || '')}">
+      <div class="name"><span>${esc(s.name)}</span>${flow ? '<i class="badge flow">skillflow</i>' : ''}${edited ? `<i class="badge edit">${t('badge.edited')}</i>` : ''}${also}</div>
+      <div class="desc">${esc(listDesc(s))}</div>
+      ${removable ? `<span class="del" data-del="${esc(s.id)}" title="${t('list.remove')}">${iconSvg('x', 14)}</span>` : ''}
+    </button>`;
   }
 
   function renderList() {
-    askDescTranslations();
     const q = state.query.trim().toLowerCase();
     const list = state.skills.filter(s => !q || (s.name + ' ' + s.description + ' ' + (s.path || '')).toLowerCase().includes(q));
+    const groups = groupsOf(list);
+    askDescTranslations(groups.filter(g => q || !isFolded(g)).flatMap(g => g.items));
     const el = $('#list');
-    if (!state.skills.length) { el.innerHTML = `<div class="list-empty">${t('list.none')}</div>`; return; }
-    if (!list.length) { el.innerHTML = `<div class="list-empty">${t('list.noMatch')}</div>`; return; }
-    el.innerHTML = groupsOf(list).map(g => `
-      <div class="group${state.collapsed[g.name] && !q ? ' collapsed' : ''}" data-group="${esc(g.name)}">
+    let html;
+    if (!state.skills.length) html = `<div class="list-empty">${t('list.none')}</div>`;
+    else if (!list.length) html = `<div class="list-empty">${t('list.noMatch')}</div>`;
+    else html = groups.map(g => {
+      const folded = isFolded(g);
+      // 折叠的大分组不生成条目，上千个 skill 也不卡
+      return `<div class="group${folded && !q ? ' collapsed' : ''}" data-group="${esc(g.name)}" data-folded="${folded ? 1 : 0}">
         <button class="group-head">${iconSvg('chevron-down', 14)}<span>${esc(g.name)}</span><span class="count">${g.items.length}</span></button>
-        <div class="items">${g.items.map(s => {
-          const flow = /```\s*skillflow/.test(s.text || '');
-          const edited = !!state.overrides[s.id];
-          return `<button class="item${s.id === state.currentId ? ' active' : ''}" data-id="${esc(s.id)}" title="${esc(s.path || '')}">
-            <div class="name"><span>${esc(s.name)}</span>${flow ? '<i class="badge flow">skillflow</i>' : ''}${edited ? `<i class="badge edit">${t('badge.edited')}</i>` : ''}</div>
-            <div class="desc">${esc(listDesc(s))}</div>
-            ${s.source === 'import' ? `<span class="del" data-del="${esc(s.id)}" title="${t('list.remove')}">${iconSvg('x', 14)}</span>` : ''}
+        <div class="items">${folded && !q ? '' : g.items.map(itemHtml).join('')}</div>
+      </div>`;
+    }).join('');
+    el.innerHTML = html + onlineHtml(q);
+  }
+
+  /* —— 网上的 skill：搜索公开目录、下载官方库（要本地服务） —— */
+  function onlineHtml(q) {
+    if (!state.server) return '';
+    const w = state.web;
+    let out = '<div class="online">';
+    if (q.length >= 2) {
+      if (w.q === q && w.items) {
+        out += `<div class="group web"><div class="group-head static">${iconSvg('globe', 14)}<span>${t('online.results')}</span><span class="count">${w.items.length}</span></div><div class="items">`;
+        out += w.items.length ? w.items.map((it, i) => {
+          const meta = [it.repo, it.installs ? t('online.installs', it.installs.toLocaleString()) : '', it.stars ? '★ ' + it.stars.toLocaleString() : ''].filter(Boolean).join(' · ');
+          return `<button class="item" data-web="${i}" title="${esc(it.repo + (it.path ? '/' + it.path : ''))}">
+            <div class="name"><span>${esc(it.name)}</span>${w.picking === i ? `<i class="badge">${t('online.fetching')}</i>` : ''}</div>
+            <div class="desc">${esc(meta)}</div>${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
           </button>`;
-        }).join('')}</div>
-      </div>`).join('');
+        }).join('') : `<div class="list-empty">${t('online.none')}</div>`;
+        out += '</div></div>';
+      } else {
+        out += `<button class="online-btn" data-web-search ${w.busy ? 'disabled' : ''}>${iconSvg('globe', 15)}<span>${w.busy ? t('online.searching') : t('online.search', state.query.trim())}</span></button>`;
+        if (w.error && w.q === q) out += `<div class="list-empty">${esc(t('online.failed', w.error))}</div>`;
+      }
+    }
+    const libs = state.official || [];
+    const n = libs.reduce((a, l) => a + l.count, 0);
+    out += `<div class="official"><div><b>${t('official.title')}</b><span>${libs.length ? esc(t('official.status', n, (libs[0].fetchedAt || '').slice(0, 10))) : t('official.desc')}</span></div>
+      <button class="btn" data-official ${state.officialBusy ? 'disabled' : ''}>${iconSvg(libs.length ? 'refresh-cw' : 'download', 14)}<span>${state.officialBusy ? t('official.downloading') : libs.length ? t('official.update') : t('official.download')}</span></button></div>`;
+    return out + '</div>';
+  }
+
+  async function webSearch() {
+    const q = state.query.trim();
+    if (q.length < 2 || state.web.busy) return;
+    state.web = { q: q.toLowerCase(), items: null, busy: true, error: '' };
+    renderList();
+    try {
+      const r = await (await fetch('api/online/search?q=' + encodeURIComponent(q))).json();
+      state.web = r.ok ? { q: q.toLowerCase(), items: r.items, busy: false } : { q: q.toLowerCase(), items: null, busy: false, error: r.error };
+    } catch (e) { state.web = { q: q.toLowerCase(), items: null, busy: false, error: e.message }; }
+    renderList();
+  }
+
+  async function pickWeb(i) {
+    const it = state.web.items && state.web.items[i];
+    if (!it || state.web.picking != null) return;
+    state.web.picking = i;
+    renderList();
+    try {
+      const qs = new URLSearchParams({ repo: it.repo, name: it.name });
+      if (it.path) qs.set('path', it.path);
+      const r = await (await fetch('api/online/skill?' + qs)).json();
+      if (!r.ok) throw new Error(/^(notFound|badRepo|badPath)$/.test(r.error) ? t('online.' + r.error, it.name, it.repo) : r.error);
+      const m = metaOf(r.text, it.name);
+      const s = { id: 'online:' + r.path, source: 'online', groupKey: 'online', kind: 'online', name: m.name, description: m.description || it.description || '', path: r.path, url: r.url, text: r.text, files: r.files || [] };
+      const k = state.skills.findIndex(x => x.id === s.id);
+      if (k >= 0) state.skills[k] = s;
+      else { const at = state.skills.findIndex(x => x.kind && x.kind !== 'project' && x.source === 'scan'); state.skills.splice(at < 0 ? state.skills.length : at, 0, s); }
+      saveOnline();
+      toast(t('online.added', s.name));
+      select(s.id);
+    } catch (e) { toast(t('online.failed', e.message), 4000); }
+    state.web.picking = null;
+    renderList();
+  }
+
+  async function loadOfficialStatus() {
+    if (!state.server) return;
+    try { state.official = (await (await fetch('api/online/official', { cache: 'no-store' })).json()).libs || []; } catch { state.official = []; }
+  }
+
+  async function downloadOfficial() {
+    if (state.officialBusy) return;
+    state.officialBusy = true;
+    renderList();
+    toast(t('official.downloading'), 60000);
+    try {
+      const r = await (await fetch('api/online/official', { method: 'POST' })).json();
+      state.official = r.libs || [];
+      const bad = (r.results || []).filter(x => !x.ok);
+      toast(bad.length ? t('online.failed', bad.map(x => x.repo + ': ' + x.error).join('; ')) : t('official.done', state.official.reduce((a, l) => a + l.count, 0)), 5000);
+      await loadSources();
+    } catch (e) { toast(t('online.failed', e.message), 5000); }
+    state.officialBusy = false;
+    renderList();
   }
 
   /* —— 选择与绘制 —— */
@@ -411,11 +519,13 @@
   }
 
   /* —— 缩放与平移 —— */
+  /* 「适应」= 宽和高都放进画布，整张图一屏看完，不用上下滚；减 1px 防止取整后冒出滚动条 */
   function fitZoom() {
     const stage = $('#stage');
-    const pad = document.body.classList.contains('present') ? 0 : 56;
-    const z = (stage.clientWidth - pad) / state.G.W;
-    return Math.max(0.2, Math.min(document.body.classList.contains('present') ? 2.5 : 1.35, z));
+    const present = document.body.classList.contains('present');
+    const pad = (present ? 0 : 56) + 1;
+    const z = Math.min((stage.clientWidth - pad) / state.G.W, (stage.clientHeight - pad) / state.G.H);
+    return Math.max(0.2, Math.min(present ? 2.5 : 1.35, z));
   }
   function currentZoom() { return state.zoom === 'fit' ? fitZoom() : state.zoom; }
   function applyZoom() {
@@ -505,7 +615,7 @@
       </div>
       ${warnings.length ? `<div class="section-title">${t('detail.notes')}</div>${warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('')}` : ''}
       <div class="section-title">${t('detail.file')}</div>
-      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(s.name)}</dd><dt>${t('detail.path')}</dt><dd>${esc(s.path || t('detail.pasted'))}</dd>${extra.map(k => `<dt>${esc(k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
+      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(s.name)}</dd><dt>${t('detail.path')}</dt><dd>${esc(s.full || s.path || t('detail.pasted'))}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
       ${s.files && s.files.length ? `<div class="section-title">${t('detail.files', s.files.length)}</div><div class="files">${s.files.slice(0, 40).map(f => esc(f)).join('<br>')}${s.files.length > 40 ? '<br>…' : ''}</div>` : ''}
       <div class="section-title">${t('detail.howto')}</div>
       <div class="hint">${t('detail.howtoText')}</div>`;
@@ -582,8 +692,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;1,800&amp;family=JetBrains+Mono:wght@400;500&amp;family=Noto+Sans+SC:wght@400;500;700;800&amp;display=swap">
 <style>
 html,body{margin:0;background:${P.page}}
-#stage{max-width:${state.G.W}px;margin:0 auto}
-#stage svg{display:block;width:100%;height:auto}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center}
+#stage svg{display:block;width:min(100vw, ${state.G.W}px, calc(100vh * ${(state.G.W / state.G.H).toFixed(4)}));height:auto}
 </style>
 </head>
 <body>
@@ -669,16 +779,21 @@ SV.i18n.set('${state.lang}');
       if (del) {
         e.stopPropagation();
         const id = del.dataset.del;
+        const gone = findSkill(id);
         state.skills = state.skills.filter(s => s.id !== id);
-        saveImported();
+        if (gone && gone.source === 'online') saveOnline(); else saveImported();
         if (state.currentId === id) { state.currentId = null; if (state.skills[0]) select(state.skills[0].id); else showEmpty(); }
         renderList();
         return;
       }
-      const head = e.target.closest('.group-head');
+      if (e.target.closest('[data-web-search]')) { webSearch(); return; }
+      if (e.target.closest('[data-official]')) { downloadOfficial(); return; }
+      const web = e.target.closest('[data-web]');
+      if (web) { pickWeb(+web.dataset.web); return; }
+      const head = e.target.closest('.group-head:not(.static)');
       if (head) {
-        const g = head.parentElement.dataset.group;
-        state.collapsed[g] = !state.collapsed[g];
+        const box = head.parentElement;
+        state.collapsed[box.dataset.group] = box.dataset.folded !== '1';
         store.set('collapsed', state.collapsed);
         renderList();
         return;
@@ -687,6 +802,12 @@ SV.i18n.set('${state.lang}');
       if (item) select(item.dataset.id);
     });
     $('#search').addEventListener('input', e => { state.query = e.target.value; renderList(); });
+    // 回车：本机没搜到时直接去网上搜
+    $('#search').addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || !state.server) return;
+      const q = state.query.trim().toLowerCase();
+      if (q.length >= 2 && !(state.web.q === q && state.web.items)) webSearch();
+    });
 
     $('#btnPlay').onclick = () => setPlaying(!state.playing);
     $('#btnNext').onclick = () => { setPlaying(false); state.player && state.player.next(); };
@@ -875,6 +996,7 @@ SV.i18n.set('${state.lang}');
     togglePanel(state.panel && !RECORD);
     bind();
     await loadSources();
+    await loadOfficialStatus();
     renderList();
     const want = params.get('skill') || decodeURIComponent((location.hash.match(/skill=([^&]+)/) || [])[1] || '') || store.get('last', '');
     const pick = state.skills.find(s => s.id === want) || state.skills.find(s => s.name === want) || state.skills.find(s => s.id.endsWith(want) && want) || state.skills[0];

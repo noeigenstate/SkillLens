@@ -37,7 +37,7 @@ skill 是一份很长的 Markdown。工作流就写在里面，但要一行行�
 | --- | --- |
 | **自动提取** | 章节变泳道；有序列表和编号小节变步骤；「如果…」变判断；「回到第 N 步，直到…」变回环；规则变注释；参考资料变侧边泳道。 |
 | **动画播放** | 每一帧都由时间算出，可以暂停、逐步、拖动，录出来的视频逐帧准确。 |
-| **整个技能库** | 列出本仓库和本机 Claude 用户 / 插件里的所有 skill；保存后 2 秒内自动重画；拖入任意文件夹即可导入。 |
+| **你有的所有 skill** | 找出本机 20 多个 agent 装的 skill、各个项目里的 skill、官方库和插件市场缓存，还能去网上搜。同一份文件装在好几个 agent 里只列一次。保存后 2 秒内自动重画；拖入任意文件夹即可导入。 |
 | **看原文** | 点任意卡片，查看原文、从哪来、到哪去。 |
 | **`skillflow` 代码块** | 一种小巧的文本格式，精确控制泳道、卡片、判断和连线。 |
 | **导出** | 独立的动画网页（单个文件，双击即看）、SVG、2 倍 PNG、MP4 视频。 |
@@ -72,7 +72,20 @@ Windows 上直接双击 **`start.bat`**。界面默认英文，点顶栏的 **�
 
 不想起服务：先运行一次 `npm run scan`，再直接双击 `index.html`。
 
-**快捷键：** <kbd>空格</kbd> 播放 / 暂停 · <kbd>←</kbd> <kbd>→</kbd> 逐步 · <kbd>+</kbd> <kbd>-</kbd> 缩放 · <kbd>0</kbd> 适应宽度 · <kbd>F</kbd> 全屏演示 · <kbd>Ctrl</kbd> + 滚轮缩放 · 拖动画布平移
+**快捷键：** <kbd>空格</kbd> 播放 / 暂停 · <kbd>←</kbd> <kbd>→</kbd> 逐步 · <kbd>+</kbd> <kbd>-</kbd> 缩放 · <kbd>0</kbd> 整张图放进画布 · <kbd>F</kbd> 全屏演示 · <kbd>Ctrl</kbd> + 滚轮缩放 · 拖动画布平移
+
+## skill 从哪来
+
+| 来源 | 列出什么 | 不要它 |
+| --- | --- | --- |
+| 本仓库 | `skills/` 和 `examples/` | |
+| 本机装的 agent | Claude Code、Codex、GitHub Copilot、Cursor、Gemini CLI、Antigravity、Windsurf / Devin、OpenCode、Goose、Amp、Factory、Kiro、Pi、OpenClaw、Cline、Roo Code、Qwen Code、Kimi Code、Trae、通义灵码、Grok 的用户、插件和自带 skill 目录，以及各家共用的 `~/.agents/skills`。`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`COPILOT_HOME`、`XDG_CONFIG_HOME` 等环境变量都会照着找 | `--no-agents` |
+| 你的项目 | SkillLens 所在的文件夹就是工作区：里面每个文件夹算一个项目，列出它的 `skills/`、`.claude/skills`、`.agents/skills`、`.github/skills`、`.cursor/skills` 等各家项目级目录。用 `--workspace <目录>` 换成别处 | `--no-workspace` |
+| 官方库 | anthropics/skills、openai/skills、anthropics/claude-plugins-official。在列表最下面点 **下载**，或运行 `npm run fetch` | `--no-official` |
+| 插件市场缓存 | agent 缓存在本机、但还没装的插件（Claude Code、Codex、Grok），默认折叠 | `--no-catalog` |
+| 网上 | 在搜索框输入，再点 **在网上搜索**：结果来自 skills.sh 和 claudeskills.info，点一下就从 GitHub 取回 SKILL.md | |
+
+同一份 SKILL.md 装在好几个 agent 里只列一次，旁边标 `+N`，详情面板写着还在哪些地方。所有文件都原地读取，扫描结果放在 `data/`，不进 git。只有网上搜索和下载官方库会联网。
 
 ## 工作原理
 
@@ -106,6 +119,7 @@ flowchart LR
 | `npm start` | 本地服务：实时刷新、自动翻译、页面内录视频 |
 | `npm run start:project` | 同上，只列本仓库的 skill |
 | `npm run scan` | 生成 `data/skills.js`，不起服务也能打开 `index.html` |
+| `npm run fetch` | 下载官方 skill 库到 `data/online/` |
 | `npm run record -- <skill> [--seconds 30] [--scale 2] [--theme blueprint\|dark\|light] [--lang en\|zh]` | 录 MP4 到 `output/` |
 
 ## 配置
@@ -113,7 +127,10 @@ flowchart LR
 | 设置 | 作用 |
 | --- | --- |
 | `--root 名字=<路径>` 或 `skillviz.config.json` | 多扫一些目录：`{"roots":[{"label":"团队 skills","dir":"<路径>"}]}` |
-| `--no-claude` | 不扫本机 Claude 的用户 / 插件 skill 目录 |
+| `--project-only` | 只列本仓库的 skill（旧名 `--no-claude`） |
+| `--workspace <目录>` | 换一个项目文件夹，可以写多次。配置文件里写 `"workspaces": ["<目录>"]` |
+| `--no-agents`、`--no-workspace`、`--no-official`、`--no-catalog` | 去掉某一类来源。配置文件里写 `"agents": false`、`"workspaces": []`、`"official": false`、`"catalog": false` |
+| `GITHUB_TOKEN` | 从网上取回 skill 时提高 GitHub 的访问次数上限 |
 | `SV_TRANSLATE=off` | 关闭自动翻译 |
 | `ANTHROPIC_API_KEY` + `npm install` | 用 Anthropic SDK 翻译，不用 Claude Code（`SV_TRANSLATE_MODEL` 指定模型） |
 | `SV_CHROME`、`SV_FFMPEG`、`SV_CLAUDE` | 找不到 Chrome / Edge、ffmpeg、Claude Code 时指定路径 |

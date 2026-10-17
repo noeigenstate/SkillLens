@@ -12,9 +12,10 @@
   },
   "scripts": {
     "start": "node scripts/serve.mjs",
-    "start:project": "node scripts/serve.mjs --no-claude",
+    "start:project": "node scripts/serve.mjs --project-only",
     "scan": "node scripts/scan.mjs",
-    "scan:project": "node scripts/scan.mjs --no-claude",
+    "scan:project": "node scripts/scan.mjs --project-only",
+    "fetch": "node scripts/fetch-official.mjs",
     "record": "node scripts/record.mjs"
   }
 }

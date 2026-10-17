@@ -1,10 +1,11 @@
-// 本地服务：列表实时扫描、支持在页面里录视频
-//   node scripts/serve.mjs [--port 5178] [--no-claude] [--no-open] [--root 名字=路径]
+// 本地服务：列表实时扫描、在页面里录视频、下载官方 skill 库、在网上搜 skill
+//   node scripts/serve.mjs [--port 5178] [--no-open] [--project-only] [--no-agents] [--no-workspace] [--no-official] [--no-catalog] [--workspace 目录] [--root 名字=路径]
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { ROOT, resolveRoots, scan, version } from './lib/scan.mjs';
+import { ROOT, resolveRoots, scan, version, summarize } from './lib/scan.mjs';
+import { fetchOfficial, officialStatus, search, fetchSkill } from './lib/online.mjs';
 import { record } from './lib/recorder.mjs';
 import { translate, detectBackend } from './lib/translate.mjs';
 
@@ -31,11 +32,20 @@ function readBody(req, limit = 30 * 1024 * 1024) {
   });
 }
 
+/* 扫描结果按版本号缓存：文件没变就不重扫（一千多个 skill 扫一遍要一秒多） */
+let cache = { v: null, data: null };
+function skillsNow() {
+  const v = version(roots);
+  if (cache.v !== v) cache = { v, data: scan(roots) };
+  return cache.data;
+}
+
 let recording = false;
+let fetching = null;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
-    if (url.pathname === '/api/skills') return send(res, 200, scan(roots));
+    if (url.pathname === '/api/skills') return send(res, 200, skillsNow());
     if (url.pathname === '/api/version') return send(res, 200, version(roots), 'text/plain; charset=utf-8');
     if (url.pathname === '/api/translate' && req.method === 'GET') {
       const be = await detectBackend();
@@ -50,6 +60,23 @@ const server = http.createServer(async (req, res) => {
         console.error('翻译失败：' + e.message);
         return send(res, 200, { ok: false, error: e.message });
       }
+    }
+    if (url.pathname === '/api/online/official' && req.method === 'GET') return send(res, 200, { libs: officialStatus(), busy: !!fetching });
+    if (url.pathname === '/api/online/official' && req.method === 'POST') {
+      // 下载官方库：anthropics/skills、openai/skills、anthropics/claude-plugins-official
+      fetching = fetching || fetchOfficial(m => console.log('官方库 ' + m)).finally(() => { fetching = null; });
+      const results = await fetching;
+      cache.v = null;
+      return send(res, 200, { ok: results.some(r => r.ok), results, libs: officialStatus() });
+    }
+    if (url.pathname === '/api/online/search') {
+      try { return send(res, 200, { ok: true, items: await search(url.searchParams.get('q')) }); }
+      catch (e) { return send(res, 200, { ok: false, error: e.message }); }
+    }
+    if (url.pathname === '/api/online/skill') {
+      const q = url.searchParams;
+      try { return send(res, 200, Object.assign({ ok: true }, await fetchSkill({ repo: q.get('repo'), name: q.get('name'), path: q.get('path') || null }))); }
+      catch (e) { return send(res, 200, { ok: false, error: e.message }); }
     }
     if (url.pathname === '/api/record' && req.method === 'POST') {
       if (recording) return send(res, 409, { ok: false, error: '上一个视频还在录' });
@@ -83,9 +110,10 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   const langArg = argv.indexOf('--lang');
   const link = `http://localhost:${PORT}/` + (langArg >= 0 && argv[langArg + 1] ? `?lang=${encodeURIComponent(argv[langArg + 1])}` : '');
-  const n = scan(roots).skills.length;
+  const data = skillsNow();
   console.log(`SkillLens 已启动：${link}`);
-  console.log(`当前扫描到 ${n} 个 skill；来源：${roots.filter(r => fs.existsSync(r.dir)).map(r => r.label).join('、')}`);
+  console.log(`当前扫描到 ${data.skills.length} 个 skill：`);
+  for (const line of summarize(data)) console.log('  ' + line);
   console.log('改了 SKILL.md 刷新页面就能看到。按 Ctrl+C 退出。');
   if (!argv.includes('--no-open')) {
     const cmd = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', link]] : process.platform === 'darwin' ? ['open', [link]] : ['xdg-open', [link]];

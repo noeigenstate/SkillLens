@@ -37,7 +37,7 @@ Skills are long Markdown files. The workflow is in there, but you have to read e
 | --- | --- |
 | **Automatic extraction** | Sections become lanes, ordered lists and numbered headings become steps, "If …" becomes a decision, "go back to step N until …" becomes a loop, rules become notes, references become a side lane. |
 | **Animated playback** | Every frame is a pure function of time, so playback can pause, step and seek, and videos record frame-perfect. |
-| **Your whole library** | Lists the repo's skills plus your local Claude user and plugin skills, redraws within 2 seconds of a save, and imports any folder by drag and drop. |
+| **Every skill you have** | Finds the skills of 20+ agents on your machine, the ones inside your projects, the official libraries and marketplace caches, and searches the web for more. A file installed in several agents is listed once. Redraws within 2 seconds of a save; drag in any folder to import. |
 | **Read the source** | Click a card to see its original text and where it comes from and goes to. |
 | **`skillflow` blocks** | A small text format for exact control over lanes, cards, decisions and lines. |
 | **Export** | Standalone animated HTML (one file, double-click to view), SVG, 2× PNG and MP4 video. |
@@ -68,7 +68,20 @@ On Windows you can double-click **`start.bat`** instead. Switch the UI to Chines
 
 Prefer no server? Run `npm run scan` once, then open `index.html` directly.
 
-**Keyboard:** <kbd>Space</kbd> play / pause · <kbd>←</kbd> <kbd>→</kbd> step · <kbd>+</kbd> <kbd>-</kbd> zoom · <kbd>0</kbd> fit · <kbd>F</kbd> present · <kbd>Ctrl</kbd> + wheel zoom · drag to pan
+**Keyboard:** <kbd>Space</kbd> play / pause · <kbd>←</kbd> <kbd>→</kbd> step · <kbd>+</kbd> <kbd>-</kbd> zoom · <kbd>0</kbd> fit the whole chart · <kbd>F</kbd> present · <kbd>Ctrl</kbd> + wheel zoom · drag to pan
+
+## Where skills come from
+
+| Source | What gets listed | Leave it out |
+| --- | --- | --- |
+| This repo | `skills/` and `examples/` | |
+| Installed agents | The user, plugin and built-in skill folders of Claude Code, Codex, GitHub Copilot, Cursor, Gemini CLI, Antigravity, Windsurf / Devin, OpenCode, Goose, Amp, Factory, Kiro, Pi, OpenClaw, Cline, Roo Code, Qwen Code, Kimi Code, Trae, Lingma, Grok, and the shared `~/.agents/skills`. `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `XDG_CONFIG_HOME` and the like are honored | `--no-agents` |
+| Your projects | The folder that holds SkillLens is your workspace: each folder in it is a project, and its `skills/`, `.claude/skills`, `.agents/skills`, `.github/skills`, `.cursor/skills` and the other agents' project folders are listed. Point elsewhere with `--workspace <dir>` | `--no-workspace` |
+| Official libraries | anthropics/skills, openai/skills and anthropics/claude-plugins-official, after you click **Download** at the bottom of the list or run `npm run fetch` | `--no-official` |
+| Marketplace caches | Plugins your agents have cached but not installed (Claude Code, Codex, Grok). Folded by default | `--no-catalog` |
+| The web | Type in the search box, then **Search the web**: results come from skills.sh and claudeskills.info, and one click fetches the SKILL.md from GitHub | |
+
+The same SKILL.md installed in several agents shows up once, with a `+N` badge; the details panel lists where else it lives. Everything is read in place and the scan result stays in `data/`, which git ignores. Only web search and the official download go online.
 
 ## How it works
 
@@ -121,6 +134,7 @@ flow:
 | `npm start` | Local server with live reload, translation and in-page video recording |
 | `npm run start:project` | Same, listing only this repo's skills |
 | `npm run scan` | Writes `data/skills.js` so `index.html` works without a server |
+| `npm run fetch` | Downloads the official skill libraries into `data/online/` |
 | `npm run record -- <skill> [--seconds 30] [--scale 2] [--theme blueprint\|dark\|light] [--lang en\|zh]` | Records an MP4 into `output/` |
 
 ## Configuration
@@ -128,7 +142,10 @@ flow:
 | Setting | Purpose |
 | --- | --- |
 | `--root Name=<path>` or `skillviz.config.json` | Scan more folders: `{"roots":[{"label":"Team skills","dir":"<path>"}]}` |
-| `--no-claude` | Skip the local Claude user and plugin skill folders |
+| `--project-only` | List only this repo's skills (old name: `--no-claude`) |
+| `--workspace <dir>` | Use another projects folder; repeat for more. In the config file: `"workspaces": ["<dir>"]` |
+| `--no-agents`, `--no-workspace`, `--no-official`, `--no-catalog` | Leave a source out. In the config file: `"agents": false`, `"workspaces": []`, `"official": false`, `"catalog": false` |
+| `GITHUB_TOKEN` | Raises GitHub's rate limit when fetching skills found on the web |
 | `SV_TRANSLATE=off` | Turn auto-translation off |
 | `ANTHROPIC_API_KEY` + `npm install` | Translate through the Anthropic SDK instead of Claude Code (`SV_TRANSLATE_MODEL` picks the model) |
 | `SV_CHROME`, `SV_FFMPEG`, `SV_CLAUDE` | Paths to Chrome / Edge, ffmpeg and the Claude Code binary when they are not found |
@@ -140,7 +157,7 @@ Translations are cached in `data/translations.json`, so each string is translate
 ```
 index.html        the app
 src/              parsing, extraction, layout, rendering, UI, strings (en / zh)
-scripts/          scan, local server, video recording (no third-party packages)
+scripts/          scan, local server, video recording, official and web skills (no third-party packages)
 skills/skilllens  the guide for using and changing SkillLens
 examples/         example skills
 docs/             logo, screenshots and the promo video
