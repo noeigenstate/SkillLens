@@ -1,5 +1,5 @@
 // 把图里的文字翻成界面语言，并为每个 skill 生成最简测试用例与使用前后对比。
-// 默认使用局域网 Qwen 大模型（http://192.168.1.19:8000/v1 · qwen3.8-27b，单路并发队列，直连不走代理）。
+// 支持本地 / 局域网大模型（OpenAI 兼容 /v1/chat/completions，直连不走系统代理；本地配置见 data/ollama.json）。
 // 结果缓存在 data/translations.json 与 data/testcases.json。
 import { spawn } from 'node:child_process';
 import http from 'node:http';
@@ -43,7 +43,7 @@ export function saveTcCache() {
 export function getOllamaConfig() {
   let fileCfg = {};
   try { fileCfg = JSON.parse(fs.readFileSync(OLLAMA_CFG_FILE, 'utf8')); } catch { /* ignore */ }
-  const rawUrl = process.env.SV_LLM_URL || process.env.SV_OLLAMA_URL || fileCfg.baseUrl || fileCfg.url || 'http://192.168.1.19:8000/v1';
+  const rawUrl = process.env.SV_LLM_URL || process.env.SV_OLLAMA_URL || fileCfg.baseUrl || fileCfg.url || 'http://localhost:11434/v1';
   const baseUrl = String(rawUrl).replace(/\/+$/, '');
   const model = process.env.SV_LLM_MODEL || process.env.SV_OLLAMA_MODEL || fileCfg.model || 'qwen3.8-27b';
   const apiKey = process.env.SV_LLM_KEY || fileCfg.apiKey || 'local';
@@ -265,7 +265,7 @@ export async function detectBackend(force = false) {
   if (llm && mode !== 'sdk' && mode !== 'claude') {
     return (backend = { name: `${llm.model} (${llm.url})`, ollama: llm, run: (t, i, m) => viaLocalLlm(llm, t, i, m) });
   }
-  // 如果默认配置了局域网地址（如 192.168.1.19:8000），绝不降级到已超限的 Claude
+  // 如果本地或环境变量配置了大模型接口，优先使用，不降级到已超限的 Claude
   const cfg = getOllamaConfig();
   if (cfg.baseUrl && (mode === 'ollama' || (!process.env.ANTHROPIC_API_KEY && !process.env.SV_CLAUDE && !mode))) {
     const chatUrl = cfg.baseUrl.endsWith('/v1') ? `${cfg.baseUrl}/chat/completions` : `${cfg.baseUrl}/v1/chat/completions`;
@@ -387,7 +387,7 @@ async function doTranslate(target, items, markdown) {
   const missing = uniq.filter(s => cache[key(target, s)] == null);
   if (missing.length) {
     const be = await detectBackend();
-    if (!be) throw new Error('没有可用的模型后端：请检查局域网 http://192.168.1.19:8000/v1 连通性');
+    if (!be) throw new Error('没有可用的模型后端：请检查本地 / 局域网大模型接口连通性');
     for (const batch of chunks(missing, markdown)) {
       try {
         const out = await be.run(target, batch, markdown);

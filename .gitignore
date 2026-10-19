@@ -1,6 +1,42 @@
-# Local scan results hold the full text of the skills on this machine; recordings stay local too
+# Local scan results and caches (holds full text of skills, local translations, testcases and LAN configs)
 data/
 output/
 node_modules/
-# Reference material, not part of the project
+
+# Secrets, API keys, tokens and environment variables
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.cert
+*.pfx
+*.token
+*credentials*.json
+*secret*.json
+*.local
+*.local.*
+config.local.*
+
+# Temporary, debug and scratch files
+.tmp/
+temp/
+tmp/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.system_generated/
+scratch/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Reference media
 reference.mp4

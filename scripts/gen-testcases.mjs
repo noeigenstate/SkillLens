@@ -1,4 +1,4 @@
-// 批量调用局域网 Qwen 3.8 27B (http://192.168.1.19:8000/v1，单路并发)
+// 批量调用本地 / 局域网大模型（OpenAI 兼容 /v1/chat/completions，单路并发）
 // 为本机扫描到的技能批量生成「最简测试用例 + 使用前后对比」，结果实时落盘到 data/testcases.json 与 data/testcases.js
 import http from 'node:http';
 import https from 'node:https';
