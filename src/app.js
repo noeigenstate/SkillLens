@@ -5,6 +5,7 @@
   const esc = SV.md.esc;
   const params = new URLSearchParams(location.search);
   const RECORD = params.has('record');
+  const motionSetting = value => ['3d', 'flat', 'minimal'].includes(value) ? value : '3d';
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem('sv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -17,14 +18,56 @@
 
   const state = {
     skills: [], currentId: null, spec: null, autoSpec: null, G: null, player: null, svg: null,
-    zoom: 'fit', cols: +(params.get('cols') || store.get('cols', 4)), theme: params.get('theme') || store.get('theme2', 'blueprint'),
+    zoom: 'fit', cols: +(params.get('cols') || store.get('cols', 4)), theme: params.get('theme') || store.get('theme3', 'light'),
     speed: 1, playing: true, selected: null, collapsed: store.get('collapsed', {}), overrides: store.get('overrides', {}),
     query: '', server: false, panel: store.get('panel', true),
     web: { q: '', items: null, busy: false, error: '' }, official: [], officialBusy: false,
-    lang: params.get('lang') || store.get('lang', 'en'),
+    lang: params.get('lang') || store.get('lang2', 'zh'),
+    motion: RECORD ? (params.get('motion') === 'flat' || params.get('motion') === 'minimal' ? 'flat' : '3d') : motionSetting(store.get('motion', '3d')), panning: false,
     translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, missing: 0, busy: false, error: '' }, showOrig: false,
   };
   SV.i18n.set(state.lang);
+
+  const ZH_GROUP_ARG = {
+    'Claude Code': '克劳德代码',
+    'Codex': '代码助手',
+    '~/.agents': '全局智能体',
+    'GitHub Copilot': '代码副驾',
+    'Antigravity': '反重力助手',
+    'Grok': '格罗克助手',
+    'mimocode': '米莫代码',
+    'claude-science': '科研智能体',
+    'Gemini CLI': '双子星终端',
+    'OpenCode': '开源代码助手',
+    'Kiro': '奇罗智能体',
+    'OpenClaw': '开源利爪助手',
+    'Qwen Code': '通义千问代码',
+    'Lingma': '通义灵码',
+    'Vibe': '氛围编程助手',
+    'Cursor': '游标编辑器',
+    'Windsurf': '乘风编辑器',
+    'Cline': '克莱恩助手',
+    'Roo Code': '袋鼠代码助手',
+    'Trae': '萃伊编辑器',
+    'Continue': '续写助手',
+    'Amp': '安普助手',
+    'Aider': '艾德助手',
+    'Zed': '极速编辑器',
+    'Goose': '飞鹅智能体',
+    '26年英伟达黑客松比赛': '26年英伟达黑客松比赛',
+    'AI_video': '智能视频项目',
+    'MetalMax': '重装机兵项目',
+    'MetalMax_backup': '重装机兵备份',
+    'nexa': '奈克萨项目',
+    'speak_plainly': '直白表达项目',
+    'xiaohongshu': '小红书项目',
+    '个人的bot': '个人机器人',
+    '这辈子': '这辈子项目',
+    'anthropics/skills': '官方技能集（安索匹克）',
+    'openai/skills': '官方技能集（开放智能）',
+    'anthropics/claude-plugins-official': '官方插件集',
+  };
+  const zhGroupArg = a => (state.lang === 'zh' && a ? (ZH_GROUP_ARG[a] || a) : (a || ''));
 
   /* 把页面上带 data-t 的静态文字换成当前语言 */
   function applyLang() {
@@ -35,18 +78,19 @@
     $$('[data-t-ph]').forEach(el => { el.placeholder = t(el.dataset.tPh); });
     $$('#selCols option').forEach(o => { o.textContent = t('cols.n', o.value); });
     $$('#selTheme option').forEach(o => { o.textContent = t('theme.' + o.value); });
-    $('#btnLang').textContent = state.lang === 'zh' ? 'EN' : '中';
+    $$('#selMotion option').forEach(o => { o.textContent = t('motion.' + o.value); });
+    $('#btnLang').textContent = state.lang === 'zh' ? '中文' : 'EN';
     setPlaying(state.playing);
   }
   function setLang(lang) {
     state.lang = SV.i18n.set(lang);
-    store.set('lang', state.lang);
+    store.set('lang2', state.lang);
     applyLang();
     renderList();
     if (state.currentId) select(state.currentId, true); else renderHeader();
   }
-  const groupName = s => s.groupKey ? t('group.' + s.groupKey, s.groupArg || '') : (s.group || t('group.other'));
-  const whereName = w => w.key ? t('group.' + w.key, w.arg || '') : (w.label || t('group.other'));
+  const groupName = s => s.groupKey ? t('group.' + s.groupKey, zhGroupArg(s.groupArg)) : (s.group || t('group.other'));
+  const whereName = w => w.key ? t('group.' + w.key, zhGroupArg(w.arg)) : (w.label || t('group.other'));
   /* 量大的分组（官方库、插件市场、软件自带的）默认折叠 */
   const FOLDED_KINDS = ['catalog', 'official'];
 
@@ -175,13 +219,166 @@
     return order.map(g => ({ name: g, items: map[g] }));
   }
 
+  const ZH_SKILL_NAMES = {
+    'skilllens': '技能图解',
+    'review-loop': '代码审查循环',
+    'faceless-explainer': '无出镜讲解视频',
+    'general-video': '通用视频制作',
+    'hyperframes-animation': '超帧动画设计',
+    'hyperframes-audio': '超帧音频混音',
+    'hyperframes-cli': '超帧命令行流程',
+    'hyperframes-core': '超帧核心合成',
+    'hyperframes-creative': '超帧创意指导',
+    'hyperframes-keyframes': '超帧关键帧运镜',
+    'hyperframes-registry': '超帧组件仓库',
+    'hyperframes-studio': '超帧工作室协作',
+    'hyperframes': '超帧视频总入口',
+    'media-use': '媒体素材调用',
+    'product-launch-video': '产品发布视频',
+    'built-in-browser': '内置浏览器控制',
+    'chrome-browser': '谷歌浏览器协同',
+    'computer-use': '电脑桌面操控',
+    'deep-research': '深度研究工作流',
+    'docs': '在线协作文档',
+    'docx': '文字文档处理',
+    'import-memory': '历史记忆导入',
+    'morning': '晨间简报生成',
+    'pdf': '便携文档处理',
+    'pptx': '演示文稿制作',
+    'skill-creator': '技能构建助手',
+    'xlsx': '电子表格处理',
+    'chibi-character': 'Q版角色设计',
+    'concept-sheet': '角色概念设定图',
+    'codex-delegate': '代码助手委派',
+    'dgx-comfyui': '算力节点生图工作流',
+    'imagegen': '智能图像生成',
+    'openai-docs': '开放智能文档查询',
+    'review-agent': '代码审查代理',
+    'skill-installer': '技能安装工具',
+    'apply-gpt-5p6-guidance': '高阶提示词规范',
+    'codex-output-polish': '输出内容润色',
+    'create-plan': '实施方案规划',
+    'design-taste-frontend': '前端审美设计',
+    'easyeda-api': '立创电路板接口',
+    'figma-implement-design': '设计稿转前端代码',
+    'frontend-skill': '前端工程开发',
+    'i-have-adhd': '专注力分步辅助',
+    'img2threejs': '图片转三维场景',
+    'nostalgic-emotion-story': '怀旧情感故事生成',
+    'project-weekly-report': '项目周报生成',
+    'remotion-best-practices': '编程视频最佳实践',
+    'remotion-captions': '编程视频字幕生成',
+    'remotion-create': '编程视频工程创建',
+    'remotion-docs': '编程视频文档查阅',
+    'remotion-markup': '编程视频画面排版',
+    'remotion-multimedia': '编程视频多媒体合成',
+    'remotion-render': '编程视频渲染导出',
+    'remotion-studio': '编程视频预览工作台',
+    'setup-api-key': '接口密钥配置',
+    'speech-to-text': '语音转文字',
+    'text-to-speech': '文字转语音',
+    'wechat-sticker': '微信表情包制作',
+    'control-in-app-browser': '应用内浏览器控制',
+    'control-chrome': '浏览器自动化控制',
+    'visualize': '数据图表可视化',
+    'google-docs': '云端文字文档',
+    'google-drive-comments': '云盘评论管理',
+    'google-drive': '云端硬盘管理',
+    'google-sheets': '云端电子表格',
+    'google-slides': '云端演示文稿',
+  };
+  const ZH_SLUG_WORDS = {
+    artifact: '成品', template: '模板', analytics: '分析', dashboard: '看板', annual: '年度', impact: '影响', report: '报告',
+    brand: '品牌', guidelines: '规范', business: '业务', review: '评审', calder: '架构', architecture: '架构',
+    creative: '创意', campaign: '活动', brief: '简报', design: '设计', experiment: '实验', analysis: '分析',
+    financial: '财务', budget: '预算', growth: '增长', strategy: '策略', investment: '投资', committee: '委员会',
+    memo: '备忘录', legal: '法务', memorandum: '备忘录', market: '市场', trends: '趋势', minimal: '极简',
+    letterhead: '信头', next: '新一代', generation: '世代', os: '系统', operating: '运营', calendar: '日历',
+    photography: '摄影', portfolio: '作品集', product: '产品', pitch: '路演', project: '项目', kickoff: '启动会',
+    tracker: '追踪', sales: '销售', pipeline: '管线', state: '前沿', of: '', art: '技术', system: '系统',
+    three: '三表', statement: '财务', forecast: '预测', weekly: '周度', maintain: '维护', space: '空间',
+    manage: '管理', schedules: '日程', organize: '整理', write: '撰写', page: '页面', plugin: '插件',
+    management: '管理', sites: '站点', create: '创建', pet: '桌宠', pets: '桌宠', update: '更新',
+    gh: '代码库', address: '处理', comments: '评论', fix: '修复', ci: '持续集成', github: '代码托管',
+    documents: '文档', presentations: '演示文稿', excel: '表格', live: '实时', control: '控制',
+    spreadsheets: '电子表格', creator: '生成器', agent: '智能体', reach: '触达', reverse: '逆向',
+    engineer: '工程', anything: '万物', compute: '算力', env: '环境', setup: '配置', customize: '定制',
+    figure: '图表', composer: '排版', style: '样式', literature: '文献', managed: '托管', model: '模型',
+    endpoints: '端点', endpoint: '端点', paper: '论文', narrative: '叙事', explore: '探索', self: '自我',
+    knowledge: '知识', remote: '远程', modal: '云容器', ssh: '远程连接', tools: '工具', awareness: '感知',
+    using: '调用', amap: '高德地图', threejs: '三维渲染', event: '事件', landmark: '地标', refinement: '精修',
+    life: '生活', butler: '管家', liquid: '流光', glass: '玻璃质感', map: '地图', scene: '场景',
+    styling: '样式', memory: '记忆', film: '胶片', identity: '身份', storytelling: '叙事', photo: '照片',
+    card: '卡片', context: '语境', cull: '筛选', spacetime: '时空', modeling: '建模', stepfun: '阶跃星辰',
+    api: '接口', story: '故事', understanding: '理解', high: '高', quality: '品质', explainer: '讲解',
+    video: '视频', game: '游戏', '3d': '三维', assets: '资产', native: '原生', optimization: '优化',
+    unreal: '虚幻引擎', dialogue: '对话', changelog: '更新日志', tool: '工具', flutter: '跨端界面',
+    ui: '界面', director: '导演', evidence: '循证', article: '文章', codex: '代码', image: '图像',
+    qc: '质检', skills: '技能集', workflow: '工作流', translate: '翻译', docs: '文档', add: '添加',
+    release: '发布', highlights: '亮点', retrospective: '复盘', team: '团队', browser: '浏览器',
+    ask: '提问', code: '代码', codebase: '代码库', diagnosing: '诊断', bugs: '缺陷', domain: '领域',
+    frontend: '前端', grill: '深度追问', me: '我', with: '结合', grilling: '深度追问', handoff: '交接',
+    implement: '实现', improve: '优化', pr: '合并请求', ai: '智能', loop: '循环', prototype: '原型',
+    research: '研究', resolving: '解决', merge: '合并', conflicts: '冲突', tdd: '测试驱动开发',
+    teach: '教学', to: '转为', questionnaire: '问卷', spec: '规范', tickets: '工单', triage: '分诊',
+    vercel: '云端', react: '前端框架', best: '最佳', practices: '实践', wait: '等等', what: '核对',
+    wayfinder: '路径导航', web: '网页', wizard: '向导', writing: '写作', for: '面向', agents: '智能体',
+    joy: '悦享', phone: '手机', diagnostics: '诊断',
+  };
+  function skillDisplayName(s) {
+    if (!s) return '';
+    const raw = String(s.name || '');
+    if (state.lang !== 'zh' || !state.translate) return raw;
+    if (ZH_SKILL_NAMES[raw]) return ZH_SKILL_NAMES[raw];
+    const low = raw.toLowerCase();
+    if (ZH_SKILL_NAMES[low]) return ZH_SKILL_NAMES[low];
+    if (/[\u3400-\u9fff]/.test(raw)) return raw;
+    const parts = low.split(/[-_\s]+/).filter(Boolean);
+    const mapped = parts.map(p => ZH_SLUG_WORDS[p]).filter(x => x !== undefined);
+    if (mapped.length === parts.length && mapped.join('')) return mapped.join('');
+    return raw;
+  }
+  function zhPolishText(str) {
+    if (typeof str !== 'string' || state.lang !== 'zh' || !state.translate) return str;
+    return str
+      .replace(/SkillLens example\s*·\s*icons Lucide \(ISC\)/gi, '技能图解示例 · 开源矢量图标库')
+      .replace(/SkillLens/g, '技能图解')
+      .replace(/SKILL\.md/g, '技能文档')
+      .replace(/skillflow/gi, '预设流程')
+      .replace(/HyperFrames/g, '超帧框架')
+      .replace(/BRIEF\.md/g, '简报文档')
+      .replace(/STORYBOARD\.md/g, '分镜文档')
+      .replace(/SCRIPT\.md/g, '旁白脚本')
+      .replace(/frame\.md/g, '画面规范')
+      .replace(/\/product-launch-video/g, '「产品发布视频」')
+      .replace(/\/hyperframes/g, '「超帧视频总入口」')
+      .replace(/Claude in Chrome/g, '谷歌浏览器协同')
+      .replace(/Claude Code/g, '克劳德代码')
+      .replace(/Claude/g, '克劳德')
+      .replace(/HTML\s*\/\s*SVG\s*\/\s*PNG/g, '网页 · 矢量图 · 高清图')
+      .replace(/\bHTML\b/g, '网页')
+      .replace(/\bMP4\b|\bmp4\b/g, '视频')
+      .replace(/\bPR\b/g, '合并请求')
+      .replace(/\bAI\b/g, '智能')
+      .replace(/\bLint\b/g, '代码检查')
+      .replace(/\bCLI\b/g, '命令行')
+      .replace(/\bURL\b/g, '网址')
+      .replace(/\bPDF\b/g, '便携文档')
+      .replace(/\bPPTX\b|\b\.pptx\b|\b\.potx\b/g, '演示文稿')
+      .replace(/\bDOCX\b|\bWord\b/g, '文字文档')
+      .replace(/\binit\b/g, '初始化')
+      .replace(/\badd\b/g, '添加组件');
+  }
+
   /* 列表里的一行描述也跟随界面语言（服务模式下自动翻译并缓存） */
   let descAsked = false;
   function listDesc(s) {
     const d = s.description || s.path || '';
-    if (!state.translate || !needsTr(d, state.lang)) return d;
+    if (!state.translate) return d;
+    if (!needsTr(d, state.lang)) return state.lang === 'zh' ? zhPolishText(d) : d;
     const hit = TR.cache[trKey(state.lang, d)];
-    return hit != null ? hit : d;
+    const out = hit != null ? hit : d;
+    return state.lang === 'zh' ? zhPolishText(out) : out;
   }
   /* 只翻译看得见的（展开的分组、搜索结果），上千条描述不会一次全送去翻译 */
   function askDescTranslations(items) {
@@ -201,7 +398,7 @@
     const also = s.alsoIn && s.alsoIn.length ? `<i class="badge also" title="${esc(t('list.alsoIn', s.alsoIn.map(whereName).join(t('list.sep'))))}">+${s.alsoIn.length}</i>` : '';
     const removable = s.source === 'import' || s.source === 'online';
     return `<button class="item${s.id === state.currentId ? ' active' : ''}" data-id="${esc(s.id)}" title="${esc(s.full || s.path || '')}">
-      <div class="name"><span>${esc(s.name)}</span>${flow ? '<i class="badge flow">skillflow</i>' : ''}${edited ? `<i class="badge edit">${t('badge.edited')}</i>` : ''}${also}</div>
+      <div class="name"><span>${esc(skillDisplayName(s))}</span>${flow ? `<i class="badge flow">${t('badge.flow')}</i>` : ''}${edited ? `<i class="badge edit">${t('badge.edited')}</i>` : ''}${also}</div>
       <div class="desc">${esc(listDesc(s))}</div>
       ${removable ? `<span class="del" data-del="${esc(s.id)}" title="${t('list.remove')}">${iconSvg('x', 14)}</span>` : ''}
     </button>`;
@@ -209,7 +406,7 @@
 
   function renderList() {
     const q = state.query.trim().toLowerCase();
-    const list = state.skills.filter(s => !q || (s.name + ' ' + s.description + ' ' + (s.path || '')).toLowerCase().includes(q));
+    const list = state.skills.filter(s => !q || (s.name + ' ' + skillDisplayName(s) + ' ' + s.description + ' ' + (s.path || '')).toLowerCase().includes(q));
     const groups = groupsOf(list);
     askDescTranslations(groups.filter(g => q || !isFolded(g)).flatMap(g => g.items));
     const el = $('#list');
@@ -345,13 +542,82 @@
   }
 
   /* —— 翻译：图里的文字跟随界面语言（中文界面看英文 skill 时显示中文，反之亦然） —— */
-  const TR = { cache: Object.assign({}, window.SV_TRANS || {}), backend: undefined, inflight: new Set() };
+  const ZH_TERMS = {
+    'SkillLens': '技能图解',
+    'SKILL.md in · auto-extracted · animated flowchart out': '读取技能文档 · 自动解析结构 · 生成3D动态流程图',
+    'Open SkillLens': '启动技能图解',
+    'folders, .md files': '文件夹、文档文件',
+    'skillflow block?': '含预设流程块？',
+    'Tweak in Structure': '在结构面板微调',
+    'HTML / SVG / PNG': '网页 · 矢量图 · 高清图',
+    'record an mp4': '录制高清演示视频',
+    'When': '触发时机',
+    'Trigger': '触发条件',
+    'import': '导入阶段',
+    'extract': '解析阶段',
+    'export': '导出阶段',
+    'start.bat': '启动脚本',
+    'drop': '拖放粘贴',
+    'skillflow?': '预设流程？',
+    'auto': '自动提炼',
+    'review': '核对审查',
+    'edit': '编辑微调',
+    'render': '渲染画布',
+    'PR Review Loop': '代码合并审查循环',
+    'Checks run first · AI reviews the diff · a human makes the call': '先跑自动检查 · 智能审查差异 · 人工最终拍板',
+    'checks · AI review · human gate': '自动检查 · 智能审查 · 人工把关',
+    'pull_request': '合并请求',
+    'CI': '自动构建',
+    'ci': '构建测试',
+    'checks?': '通过检查？',
+    'AI review': '智能代码审查',
+    'AI': '智能代理',
+    'diff': '代码差异',
+    'risk': '风险评估',
+    'you': '人工把关',
+    'panel': '审查面板',
+    'approve?': '是否批准？',
+    'merge': '合并发布',
+    'Lint and test': '代码检查与测试',
+    'one screen per PR': '每个合并请求一屏总览',
+    'Reviewer asks for changes → back to the AI pass': '审查者要求修改 → 返回智能审查',
+    'next PR': '下一单请求',
+    'Faceless Explainer to HyperFrames': '无出镜讲解视频制作流程',
+    'faceless-explainer': '无出镜讲解视频',
+    'Audio': '音频与配音合成',
+    'brief-contract.md': '简报契约规范',
+    'story-spine.md': '故事主线规范',
+    'frame-presets/': '画面预设目录',
+    'design-spec.md': '视觉设计规范',
+    'story-design.md': '故事编排指南',
+    'blueprints-index.md': '镜头蓝图索引',
+    'storyboard-format.md': '分镜脚本格式',
+    'script-format.md · tts.md · visual-design.md · motion-language.md · cut-catalog.md · rules-index.md + rules/ · frame-worker-core.md · frame-worker.md · subagent-dispatch.md': '旁白格式 · 语音合成 · 视觉设计 · 动效语言 · 转场目录 · 动效规则集 · 画面核心 · 画面子代理 · 子代理调度',
+    'SkillLens example · icons Lucide (ISC)': '技能图解示例 · 开源矢量图标库',
+    'skills / review-loop / SKILL.md': '技能库 / 代码审查循环 / 技能文档',
+  };
+  function buildTrCache() {
+    const base = Object.assign({}, window.SV_TRANS || {});
+    for (const [k, v] of Object.entries(base)) {
+      if (k.startsWith('zh\u0001')) {
+        const raw = k.slice(3);
+        const stripped = raw.replace(/^(?:(?:Step|Phase|Stage)\s+\d+(?:\.\d+)?(?:\s*[–—-]\s*\d+(?:\.\d+)?|\s+to\s+\d+(?:\.\d+)?)?|\d+(?:\.\d+)?)\s*[:：\-—]\s*/i, '');
+        if (stripped && stripped !== raw && !base['zh\u0001' + stripped]) {
+          base['zh\u0001' + stripped] = String(v).replace(/^(?:(?:步骤|阶段|第)\s*\d+(?:\.\d+)?\s*(?:步|阶段)?|\d+(?:\.\d+)?)\s*[:：\-—]\s*/, '');
+        }
+      }
+    }
+    for (const [k, v] of Object.entries(ZH_TERMS)) base['zh\u0001' + k] = v;
+    return base;
+  }
+  const TR = { cache: buildTrCache(), backend: undefined, inflight: new Set() };
   const trKey = (lang, s) => lang + '\u0001' + s;
   function needsTr(s, lang) {
     if (typeof s !== 'string') return false;
     const x = s.trim();
     if (!x || /^(yes|no)$/i.test(x)) return false;
     if (lang === 'zh') {
+      if (ZH_TERMS[x]) return true;
       if (!/[A-Za-z]{2,}/.test(x) || SV.text.cjkRatio(x) > 0.3) return false;
       if (!/\s/.test(x) && /[./\\_:@<>{}=#\d]/.test(x)) return false; // 文件名、路径、命令
       return true;
@@ -363,12 +629,12 @@
     const one = v => { const r = fn(v); return r === undefined ? v : r; };
     const field = (o, k) => { if (o && typeof o[k] === 'string') o[k] = one(o[k]); };
     const lines = n => { if (Array.isArray(n.lines)) n.lines = n.lines.map(one); else field(n, 'lines'); };
-    field(spec, 'title'); field(spec, 'subtitle');
+    field(spec, 'title'); field(spec, 'subtitle'); field(spec, 'window'); field(spec, 'footer');
     if (spec.hero) { field(spec.hero, 'title'); field(spec.hero, 'sub'); }
-    if (spec.trigger) { field(spec.trigger, 'title'); lines(spec.trigger); }
+    if (spec.trigger) { field(spec.trigger, 'title'); field(spec.trigger, 'tag'); lines(spec.trigger); }
     for (const l of spec.lanes || []) {
-      field(l, 'title');
-      (l.nodes || []).forEach(n => { field(n, 'title'); lines(n); });
+      field(l, 'title'); field(l, 'tag');
+      (l.nodes || []).forEach(n => { field(n, 'title'); field(n, 'tag'); lines(n); });
       if (l.notes) l.notes = l.notes.map(one);
     }
     (spec.edges || []).forEach(e => field(e, 'label'));
@@ -382,13 +648,14 @@
     const missing = new Set();
     let any = false;
     eachText(spec, s => {
-      if (!needsTr(s, lang)) return undefined;
+      if (lang === 'zh' && state.translate && ZH_TERMS[s]) { any = true; return ZH_TERMS[s]; }
+      if (!needsTr(s, lang)) return lang === 'zh' && state.translate ? zhPolishText(s) : undefined;
       any = true;
       if (!state.translate) return undefined;
       const hit = TR.cache[trKey(lang, s)];
-      if (hit != null) return hit;
+      if (hit != null) return lang === 'zh' ? zhPolishText(hit) : hit;
       missing.add(s);
-      return undefined;
+      return lang === 'zh' ? zhPolishText(s) : undefined;
     });
     state.spec = spec;
     state.trInfo.any = any;
@@ -490,21 +757,22 @@
   function ensureFonts(spec, timeout) {
     if (!document.fonts || !document.fonts.load) return Promise.resolve();
     const text = specChars(spec) + ' 0123456789 是否';
-    const jobs = ['400 14px', '500 14px', '700 18px', '800 36px', 'italic 800 36px'].flatMap(w => [document.fonts.load(`${w} "Noto Sans SC"`, text), document.fonts.load(`${w} Inter`, text)])
+    const jobs = ['400 14px', '500 14px', '700 18px', '800 40px'].flatMap(w => [document.fonts.load(`${w} "Noto Sans SC"`, text), document.fonts.load(`${w} Inter`, text)])
       .concat([document.fonts.load('500 11px "JetBrains Mono"', text), document.fonts.load('400 13px "JetBrains Mono"', text)]);
     return Promise.race([Promise.all(jobs).catch(() => {}), new Promise(r => setTimeout(r, timeout || 2500))]);
   }
 
   function draw(keepTime) {
+    if (state.lang && SV.i18n.lang !== state.lang) SV.i18n.set(state.lang);
     state.drawnEpoch = fontEpoch;
     const t0 = keepTime && state.player ? state.player.time : 0;
     if (state.player) state.player.destroy();
     const G = SV.layout(state.spec, { cols: state.cols });
     state.G = G;
     const canvas = $('#canvas');
-    canvas.innerHTML = SV.render.toSVG(G, { theme: state.theme });
+    canvas.innerHTML = '<div class="sv-cam">' + SV.render.toSVG(G, { theme: state.theme }) + '</div>';
     state.svg = canvas.querySelector('svg');
-    state.player = SV.render.createPlayer(state.svg, G, { loop: !RECORD });
+    state.player = SV.render.createPlayer(state.svg, G, { loop: !RECORD, reducedMotion: state.motion === 'minimal', camera: { el: canvas.querySelector('.sv-cam'), strength: cameraStrength() } });
     state.player.setSpeed(state.speed);
     if (!state.playing || RECORD) state.player.pause();
     if (t0) state.player.seek(t0);
@@ -513,41 +781,104 @@
     applyZoom();
   }
 
+  const ZH_FM_KEYS = {
+    license: '许可协议',
+    'allowed-tools': '可用工具',
+    compatibility: '兼容环境',
+    metadata: '附加信息',
+    version: '版本号',
+    author: '作者',
+  };
+  function zhPathText(p, s) {
+    if (!p || state.lang !== 'zh' || !state.translate) return p;
+    return String(p)
+      .replace(/UserData/g, '用户数据')
+      .replace(/\.claude/g, '克劳德配置')
+      .replace(/\bskills\b/gi, '技能库')
+      .replace(/\bexamples\b/gi, '示例库')
+      .replace(/SKILL\.md/gi, '技能文档')
+      .replace(s && s.name ? s.name : '\u0000', s ? skillDisplayName(s) : '');
+  }
+  const ZH_FILE_NAMES = {
+    'cut-catalog': '转场目录',
+    'motion-language': '动效语言',
+    'story-design': '故事编排指南',
+    'visual-design': '视觉设计规范',
+    'assemble-index': '索引组装',
+    'audio': '音频与配音合成',
+    'build-frame': '画面预设构建',
+    'captions': '字幕生成',
+    'frame-packets': '画面数据包',
+    'transitions': '转场注入与校验',
+    'frame-worker': '画面构建子代理',
+  };
+  function zhFileItem(f) {
+    if (!f || state.lang !== 'zh' || !state.translate) return f;
+    let out = String(f)
+      .replace(/^references\//, '参考资料 / ')
+      .replace(/^scripts\//, '脚本工具 / ')
+      .replace(/^sub-agents\//, '子代理 / ')
+      .replace(/^templates\//, '模板 / ')
+      .replace(/^assets\//, '素材 / ')
+      .replace(/\.test\.(mjs|js|ts)$/, '（测试脚本）')
+      .replace(/\.(mjs|js|ts|py|sh)$/, '（脚本）')
+      .replace(/\.md$/, '（文档）')
+      .replace(/\.json$/, '（配置）');
+    for (const [k, v] of Object.entries(ZH_FILE_NAMES)) out = out.replace(k, v);
+    return out;
+  }
+
   function renderHeader() {
     const s = findSkill(state.currentId);
     const spec = state.spec;
-    $('#current').innerHTML = s && spec ? `<b>${esc(spec.title || s.name)}</b><span>${esc(s.path || s.name)}</span>` : `<b>${t('current.none')}</b>`;
-    document.title = s ? `${s.name} · ${t('app.title')}` : t('app.title');
+    const dispName = s ? skillDisplayName(s) : '';
+    const subPath = s ? zhPathText(s.path || s.name, s) : '';
+    $('#current').innerHTML = s && spec ? `<b>${esc(spec.title || dispName)}</b><span>${esc(subPath)}</span>` : `<b>${t('current.none')}</b>`;
+    document.title = s ? `${dispName} · ${t('app.title')}` : t('app.title');
   }
 
   /* —— 缩放与平移 —— */
+  function cameraStrength() {
+    return state.motion !== '3d' ? 0 : RECORD || document.body.classList.contains('present') ? 1 : state.zoom === 'fit' && !state.panning ? .5 : 0;
+  }
+  function setMotion(value) {
+    state.motion = RECORD && value === 'minimal' ? 'flat' : motionSetting(value);
+    store.set('motion', state.motion);
+    $('#selMotion').value = state.motion;
+    if (state.spec) draw(true);
+  }
   /* 「适应」= 宽和高都放进画布，整张图一屏看完，不用上下滚；减 1px 防止取整后冒出滚动条 */
   function fitZoom() {
     const stage = $('#stage');
     const present = document.body.classList.contains('present');
-    const pad = (present ? 0 : 56) + 1;
+    const pad = (present ? 0 : 16) + 1;
     const z = Math.min((stage.clientWidth - pad) / state.G.W, (stage.clientHeight - pad) / state.G.H);
-    return Math.max(0.2, Math.min(present ? 2.5 : 1.35, z));
+    return Math.max(0.2, Math.min(present ? 2.5 : 1.5, z));
   }
   function currentZoom() { return state.zoom === 'fit' ? fitZoom() : state.zoom; }
   function applyZoom() {
     if (!state.svg || !state.G) return;
     const z = RECORD ? 1 : currentZoom();
-    state.svg.style.width = state.G.W * z + 'px';
-    state.svg.style.height = state.G.H * z + 'px';
+    const width = state.G.W * z + 'px', height = state.G.H * z + 'px';
+    if (state.svg.style.width !== width) state.svg.style.width = width;
+    if (state.svg.style.height !== height) state.svg.style.height = height;
+    state.player.setCamera({ strength: cameraStrength(), width: state.G.W * z, height: state.G.H * z, ease: !RECORD && !document.body.classList.contains('present') });
     $('#btnZoomFit').textContent = Math.round(z * 100) + '%';
   }
   function zoomBy(f, cx, cy) {
+    if (RECORD || document.body.classList.contains('present')) return;
     const stage = $('#stage');
     const z0 = currentZoom();
     const z1 = Math.max(0.2, Math.min(3, z0 * f));
     const rect = stage.getBoundingClientRect();
     const px = (cx == null ? rect.width / 2 : cx - rect.left) + stage.scrollLeft;
     const py = (cy == null ? rect.height / 2 : cy - rect.top) + stage.scrollTop;
-    state.zoom = z1;
-    applyZoom();
-    stage.scrollLeft = px * z1 / z0 - (px - stage.scrollLeft);
-    stage.scrollTop = py * z1 / z0 - (py - stage.scrollTop);
+    state.player && state.player.setCamera({ strength: 0, ease: true, onSettled() {
+      state.zoom = z1;
+      applyZoom();
+      stage.scrollLeft = px * z1 / z0 - (px - stage.scrollLeft);
+      stage.scrollTop = py * z1 / z0 - (py - stage.scrollTop);
+    } });
   }
 
   /* —— 播放控制 —— */
@@ -624,7 +955,7 @@
         <button class="btn ghost" data-goto="" style="margin:-6px 0 8px -8px">${iconSvg('chevron-left', 14)}${t('detail.back')}</button>
         <h3>${esc(n.title)}</h3>
         <div class="meta"><span class="badge">${t('type.' + (n.type || 'step'))}</span>${n.optional ? `<span class="badge">${t('detail.optional')}</span>` : ''}${n.tag ? `<span>${esc(n.tag)}</span>` : ''}${lane ? `<span>· ${esc(lane.title)}</span>` : ''}</div>
-        ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd>${esc(n.path)}</dd></dl>` : ''}
+        ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd>${esc(zhPathText(n.path, s))}</dd></dl>` : ''}
         ${lines ? `<div class="md"><p>${esc(lines).replace(/\n/g, '<br>')}</p></div>` : ''}
         ${ins.length ? `<div class="section-title">${t('detail.from')}</div><div class="links">${ins.map(e => link(e.from, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'in')).join('')}</div>` : ''}
         ${outs.length || stubs.length ? `<div class="section-title">${t('detail.to')}</div><div class="links">${outs.map(e => link(e.to, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'out')).join('')}${stubs.map(x => `<button disabled>${iconSvg('chevron-right', 14)}${esc(x.text)}<small>${esc(x.label || t('detail.exit'))}</small></button>`).join('')}</div>` : ''}
@@ -636,8 +967,10 @@
     const extra = Object.keys(fm).filter(k => k !== 'name' && k !== 'description');
     const srcName = t('src.' + (sp.source || 'auto'));
     const warnings = (sp.warnings || []).concat(state.G ? state.G.warnings : []).concat(state.specError ? [state.specError] : []);
+    const dispName = skillDisplayName(s);
+    const dispPath = zhPathText(s.full || s.path || t('detail.pasted'), s);
     el.innerHTML = `
-      <h3>${esc(sp.title || s.name)}</h3>
+      <h3>${esc(sp.title || dispName)}</h3>
       <div class="meta"><span class="badge ${sp.source === 'auto' ? '' : 'flow'}">${srcName}</span><span>${esc(groupName(s))}</span></div>
       <div class="md"><p>${esc(listDesc(s) || sp.description || t('detail.noDesc'))}</p></div>
       <div class="stats">
@@ -647,8 +980,8 @@
       </div>
       ${warnings.length ? `<div class="section-title">${t('detail.notes')}</div>${warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('')}` : ''}
       <div class="section-title">${t('detail.file')}</div>
-      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(s.name)}</dd><dt>${t('detail.path')}</dt><dd>${esc(s.full || s.path || t('detail.pasted'))}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
-      ${s.files && s.files.length ? `<div class="section-title">${t('detail.files', s.files.length)}</div><div class="files">${s.files.slice(0, 40).map(f => esc(f)).join('<br>')}${s.files.length > 40 ? '<br>…' : ''}</div>` : ''}
+      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(dispName)}</dd><dt>${t('detail.path')}</dt><dd>${esc(dispPath)}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(state.lang === 'zh' ? (ZH_FM_KEYS[k] || k) : k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
+      ${s.files && s.files.length ? `<div class="section-title">${t('detail.files', s.files.length)}</div><div class="files">${s.files.slice(0, 40).map(f => esc(zhFileItem(f))).join('<br>')}${s.files.length > 40 ? '<br>…' : ''}</div>` : ''}
       <div class="section-title">${t('detail.howto')}</div>
       <div class="hint">${t('detail.howtoText')}</div>`;
   }
@@ -716,18 +1049,19 @@
     const mods = ['i18n', 'markdown', 'extract', 'layout', 'render'].map(k => `SV.mod.${k} = ${SV.mod[k].toString()};\nSV.mod.${k}(SV);`).join('\n').replace(/<\/script/gi, '<\\/script');
     const json = JSON.stringify(spec).replace(/</g, '\\u003c');
     return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${state.lang === 'zh' ? 'zh-CN' : 'en'}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(spec.title || spec.name)} · ${t('app.title')}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;1,800&amp;family=JetBrains+Mono:wght@400;500&amp;family=Noto+Sans+SC:wght@400;500;700;800&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;family=Noto+Sans+SC:wght@400;500;700;800&amp;display=swap">
 <style>
-html,body{margin:0;background:${P.page}}
-body{min-height:100vh;display:flex;align-items:center;justify-content:center}
-#stage svg{display:block;width:min(100vw, ${state.G.W}px, calc(100vh * ${(state.G.W / state.G.H).toFixed(4)}));height:auto}
+html,body{margin:0;background:${{ blueprint: '#041626', dark: '#06080c', light: '#e0daf3' }[state.theme]};background-image:linear-gradient(color-mix(in srgb, ${P.text3} 6%, transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb, ${P.text3} 6%, transparent) 1px,transparent 1px);background-size:40px 40px}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.sv-cam{transform-origin:50% 50%;box-shadow:0 30px 80px ${state.theme === 'light' ? 'rgba(80,60,140,.22)' : 'rgba(0,0,0,.45)'};width:min(100vw, ${state.G.W}px, calc(100vh * ${state.G.W / state.G.H}))}
+#stage svg{display:block;width:100%;height:auto}
 </style>
 </head>
 <body>
@@ -744,14 +1078,21 @@ SV.i18n.set('${state.lang}');
   if (document.fonts && document.fonts.load) {
     var text = JSON.stringify(spec) + ' 0123456789 是否';
     var jobs = [];
-    ['400 14px', '500 14px', '700 18px', '800 36px', 'italic 800 36px'].forEach(function (w) { jobs.push(document.fonts.load(w + ' "Noto Sans SC"', text), document.fonts.load(w + ' Inter', text)); });
+    ['400 14px', '500 14px', '700 18px', '800 40px'].forEach(function (w) { jobs.push(document.fonts.load(w + ' "Noto Sans SC"', text), document.fonts.load(w + ' Inter', text)); });
     jobs.push(document.fonts.load('500 11px "JetBrains Mono"', text));
     await Promise.race([Promise.all(jobs).catch(function () {}), new Promise(function (r) { setTimeout(r, 6000); })]);
   }
   var G = SV.layout(spec, { cols: ${state.cols} });
   var stage = document.getElementById('stage');
-  stage.innerHTML = SV.render.toSVG(G, { theme: '${state.theme}' });
-  var p = SV.render.createPlayer(stage.querySelector('svg'), G, { loop: !/[?&]record/.test(location.search) });
+  stage.innerHTML = '<div class="sv-cam">' + SV.render.toSVG(G, { theme: '${state.theme}' }) + '</div>';
+  var query = new URLSearchParams(location.search), recording = query.has('record');
+  var motion = recording ? (query.get('motion') === 'flat' || query.get('motion') === 'minimal' ? 'flat' : '3d') : '${state.motion}';
+  var cam = stage.querySelector('.sv-cam');
+  var p = SV.render.createPlayer(stage.querySelector('svg'), G, { loop: !recording, reducedMotion: motion === 'minimal', camera: { el: cam, strength: motion === '3d' ? 1 : 0 } });
+  function resizeCamera() { p.setCamera({ width: cam.clientWidth || G.W, height: cam.clientHeight || G.H }); }
+  resizeCamera();
+  window.addEventListener('resize', resizeCamera);
+  if (window.ResizeObserver) new ResizeObserver(resizeCamera).observe(cam);
   stage.addEventListener('click', function () { p.toggle(); });
   document.addEventListener('keydown', function (e) {
     if (e.code === 'Space') { p.toggle(); e.preventDefault(); }
@@ -759,7 +1100,7 @@ SV.i18n.set('${state.lang}');
     if (e.key === 'ArrowLeft') p.prev();
   });
   var round0 = p.tour ? p.tour.segs.filter(function (s) { return s.round === 0; }).pop() : null;
-  window.SVRec = { info: function () { return { W: G.W, H: G.H, duration: p.duration, round0: round0 ? round0.t1 : p.duration }; }, seek: function (t) { p.pause(); p.seek(t); } };
+  window.SVRec = { info: function () { return { W: G.W, H: G.H, duration: p.intro + p.duration, round0: p.intro + (round0 ? round0.t1 : p.duration) }; }, seek: function (t) { p.pause(); p.seek(t); } };
   window.seek = window.SVRec.seek;
 })();
 </script>
@@ -779,7 +1120,7 @@ SV.i18n.set('${state.lang}');
     try {
       const r = await fetch('api/record', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: safeName(state.spec.name), html: standaloneHtml(), seconds: secs ? +secs : null }),
+        body: JSON.stringify({ name: safeName(state.spec.name), html: standaloneHtml(), motion: state.motion === 'minimal' ? 'flat' : state.motion, seconds: secs ? +secs : null }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || r.statusText);
@@ -853,9 +1194,11 @@ SV.i18n.set('${state.lang}');
     $('#selCols').value = String(state.cols);
     $('#selCols').onchange = e => { state.cols = +e.target.value; store.set('cols', state.cols); if (state.spec) draw(); };
     $('#selTheme').value = state.theme;
+    $('#selMotion').value = state.motion;
+    $('#selMotion').onchange = e => setMotion(e.target.value);
     $('#selTheme').onchange = e => {
       state.theme = e.target.value;
-      store.set('theme2', state.theme);
+      store.set('theme3', state.theme);
       document.documentElement.dataset.ui = state.theme;
       if (state.spec) draw(true);
     };
@@ -965,13 +1308,18 @@ SV.i18n.set('${state.lang}');
     window.addEventListener('mousemove', e => {
       if (!pan) return;
       const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
-      if (!pan.moved && Math.hypot(dx, dy) > 4) { pan.moved = true; stage.classList.add('panning'); }
-      if (pan.moved) { stage.scrollLeft = pan.sl - dx; stage.scrollTop = pan.st - dy; }
+      if (!pan.moved && Math.hypot(dx, dy) > 4) {
+        pan.moved = true; state.panning = true; stage.classList.add('panning');
+        state.player && state.player.setCamera({ strength: 0, ease: true, onSettled() { if (pan) pan.flat = true; } });
+      }
+      if (pan.moved && pan.flat) { stage.scrollLeft = pan.sl - dx; stage.scrollTop = pan.st - dy; }
     });
     window.addEventListener('mouseup', e => {
       if (!pan) return;
       const moved = pan.moved;
       pan = null;
+      state.panning = false;
+      if (moved && state.player) state.player.setCamera({ strength: cameraStrength(), ease: true });
       stage.classList.remove('panning');
       if (moved) return;
       const node = e.target.closest && e.target.closest('.sv-node');
@@ -1011,6 +1359,7 @@ SV.i18n.set('${state.lang}');
       else if (e.key === '+' || e.key === '=') zoomBy(1.15);
       else if (e.key === '-') zoomBy(1 / 1.15);
       else if (e.key === '0') { state.zoom = 'fit'; applyZoom(); }
+      else if (e.key === 'd' || e.key === 'D') setMotion(state.motion === '3d' ? 'flat' : '3d');
       else if (e.key === 'f' || e.key === 'F') setPresent(!document.body.classList.contains('present'));
       else if (e.key === 'Escape') { setPresent(false); $('#pasteModal').hidden = true; }
     });
@@ -1073,9 +1422,9 @@ SV.i18n.set('${state.lang}');
       SV.layoutUtil.clearCache();
       draw();
       state.frozen = true; // 开始录制后不再因字体加载而重排，保证每一帧画面一致
-      const round0 = () => { const p = state.player; const r = p && p.tour ? p.tour.segs.filter(s => s.round === 0).pop() : null; return r ? r.t1 : p.duration; };
+      const round0 = () => { const p = state.player; const r = p && p.tour ? p.tour.segs.filter(s => s.round === 0).pop() : null; return p.intro + (r ? r.t1 : p.duration); };
       window.SVRec = {
-        info: () => ({ W: state.G.W, H: state.G.H, duration: state.player.duration, round0: round0(), name: state.spec.name }),
+        info: () => ({ W: state.G.W, H: state.G.H, duration: state.player.intro + state.player.duration, round0: round0(), name: state.spec.name }),
         seek: t => { state.player.pause(); state.player.seek(t); },
       };
     }

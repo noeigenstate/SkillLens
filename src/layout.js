@@ -149,7 +149,7 @@ SV.mod.layout = function (SV) {
     const colX = c => K.LANE_X + K.PAD + c * (K.CARD_W + K.GAP);
     const G = { W, H: 0, cols, K, FONT, MONO, nodes: {}, lanes: [], rows: [], edges: [], stubs: [], labels: [], notes: [], spec, warnings: [] };
     G.header = { window: spec.window || '', title: spec.title || '', subtitle: spec.subtitle || '' };
-    G.header.titleText = fit(G.header.title, W - K.LANE_X - K.RIGHT - 10, 36, 800);
+    G.header.titleText = fit(G.header.title, W - K.LANE_X - K.RIGHT - 10, 40, 800);
     G.header.subText = fit(G.header.subtitle, W - K.LANE_X - K.RIGHT - 10, 17, 400);
     G.header.window = fit(G.header.window, W - K.LANE_X - 80, 12.5, 400, MONO);
 

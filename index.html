@@ -8,54 +8,58 @@
   <!-- 字体：Noto Sans SC（中文）、Inter（英文）、JetBrains Mono（标签）；断网时退回系统字体 -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;1,800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;800&display=swap">
   <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand"><i data-icon="workflow"></i><span data-t="app.title">SkillLens</span> <small data-t="app.tagline">SKILL.md → animated flowchart</small></div>
-      <div class="current" id="current"><b data-t="current.none">No skill selected</b></div>
-      <span class="tr-chip" id="trStatus" hidden></span>
+      <div class="brand"><i data-icon="workflow"></i><span data-t="app.title">技能图解</span> <small class="tool-hidden" data-t="app.tagline">技能文档 → 3D 动态流程图</small></div>
+      <div class="current" id="current"><b data-t="current.none">未选择技能</b></div>
+      <span class="tr-chip tool-hidden" id="trStatus" hidden></span>
       <div class="tools">
         <button class="btn icon" id="btnPrev" data-t-title="btn.prev"><i data-icon="chevron-left"></i></button>
-        <button class="btn primary" id="btnPlay" data-t-title="btn.playTitle"><i data-icon="pause"></i><span>Pause</span></button>
+        <button class="btn primary" id="btnPlay" data-t-title="btn.playTitle"><i data-icon="pause"></i><span>暂停</span></button>
         <button class="btn icon" id="btnNext" data-t-title="btn.next"><i data-icon="chevron-right"></i></button>
-        <select class="btn" id="selSpeed" data-t-title="sel.speed">
+        <select class="btn tool-hidden" id="selSpeed" data-t-title="sel.speed">
           <option value="0.5">0.5×</option>
           <option value="1" selected>1×</option>
           <option value="1.5">1.5×</option>
           <option value="2">2×</option>
         </select>
         <span class="sep"></span>
-        <button class="btn icon" id="btnZoomOut" data-t-title="btn.zoomOut"><i data-icon="minus"></i></button>
-        <button class="btn ghost zoom-label" id="btnZoomFit" data-t-title="btn.zoomFit">100%</button>
-        <button class="btn icon" id="btnZoomIn" data-t-title="btn.zoomIn"><i data-icon="plus"></i></button>
-        <span class="sep"></span>
-        <select class="btn" id="selCols" data-t-title="sel.cols">
+        <button class="btn icon tool-hidden" id="btnZoomOut" data-t-title="btn.zoomOut"><i data-icon="minus"></i></button>
+        <button class="btn ghost zoom-label tool-hidden" id="btnZoomFit" data-t-title="btn.zoomFit">100%</button>
+        <button class="btn icon tool-hidden" id="btnZoomIn" data-t-title="btn.zoomIn"><i data-icon="plus"></i></button>
+        <select class="btn tool-hidden" id="selCols" data-t-title="sel.cols">
           <option value="3">3</option>
           <option value="4" selected>4</option>
           <option value="5">5</option>
           <option value="6">6</option>
         </select>
-        <select class="btn" id="selTheme" data-t-title="btn.theme">
-          <option value="blueprint">Blueprint</option>
-          <option value="dark">Midnight</option>
-          <option value="light">Glass</option>
+        <select class="btn tool-hidden" id="selMotion" data-t-title="motion.title">
+          <option value="3d">3D</option>
+          <option value="flat">平面</option>
+          <option value="minimal">简洁</option>
         </select>
-        <button class="btn icon" id="btnTrans" data-t-title="btn.trans" hidden><i data-icon="languages"></i></button>
-        <button class="btn lang" id="btnLang" data-t-title="btn.lang">EN</button>
+        <select class="btn tool-hidden" id="selTheme" data-t-title="btn.theme">
+          <option value="light" selected>奶白</option>
+          <option value="blueprint">蓝图</option>
+          <option value="dark">深夜</option>
+        </select>
+        <button class="btn icon tool-hidden" id="btnTrans" data-t-title="btn.trans" hidden><i data-icon="languages"></i></button>
+        <button class="btn lang tool-hidden" id="btnLang" data-t-title="btn.lang">中文</button>
         <button class="btn icon" id="btnPresent" data-t-title="btn.present"><i data-icon="maximize"></i></button>
         <div class="menu" id="exportMenu">
-          <button class="btn" id="btnExport"><i data-icon="download"></i><span data-t="btn.export">Export</span></button>
+          <button class="btn" id="btnExport"><i data-icon="download"></i><span data-t="btn.export">导出</span></button>
           <div class="menu-list">
-            <button data-export="html"><i data-icon="file-code"></i><span data-t="exp.html">Standalone page (animated)</span><small>.html</small></button>
-            <button data-export="svg"><i data-icon="image"></i><span data-t="exp.svg">Current frame</span><small>.svg</small></button>
-            <button data-export="png"><i data-icon="image"></i><span data-t="exp.png">Current frame (2×)</span><small>.png</small></button>
-            <button data-export="video"><i data-icon="film"></i><span data-t="exp.video">Record video</span><small>.mp4</small></button>
+            <button data-export="html"><i data-icon="file-code"></i><span data-t="exp.html">独立网页（含动画）</span><small>.html</small></button>
+            <button data-export="svg"><i data-icon="image"></i><span data-t="exp.svg">当前画面矢量图</span><small>.svg</small></button>
+            <button data-export="png"><i data-icon="image"></i><span data-t="exp.png">当前画面高清图（2×）</span><small>.png</small></button>
+            <button data-export="video"><i data-icon="film"></i><span data-t="exp.video">录制演示视频</span><small>.mp4</small></button>
             <hr>
-            <button data-export="flow"><i data-icon="clipboard-copy"></i><span data-t="exp.flow">Copy skillflow block</span></button>
-            <button data-export="spec"><i data-icon="braces"></i><span data-t="exp.spec">Export structure data</span><small>.json</small></button>
+            <button data-export="flow"><i data-icon="clipboard-copy"></i><span data-t="exp.flow">复制流程代码块</span></button>
+            <button data-export="spec"><i data-icon="braces"></i><span data-t="exp.spec">导出结构数据</span><small>.json</small></button>
           </div>
         </div>
         <button class="btn icon" id="btnPanel" data-t-title="btn.panel"><i data-icon="panel-right"></i></button>

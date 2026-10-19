@@ -88,7 +88,8 @@ const server = http.createServer(async (req, res) => {
         const page = path.join(OUT, '.tmp', name + '.html');
         fs.writeFileSync(page, String(body.html || ''));
         const file = path.join(OUT, name + '.mp4');
-        const r = await record({ url: `http://127.0.0.1:${PORT}/output/.tmp/${encodeURIComponent(name)}.html?record=1`, out: file, seconds: body.seconds || null, log: m => console.log(m) });
+        const motion = body.motion === 'flat' || body.motion === 'minimal' ? 'flat' : '3d';
+        const r = await record({ url: `http://127.0.0.1:${PORT}/output/.tmp/${encodeURIComponent(name)}.html?record=1&motion=${motion}`, out: file, seconds: body.seconds || null, log: m => console.log(m) });
         console.log('视频完成：' + path.relative(ROOT, file));
         return send(res, 200, { ok: true, file: path.relative(ROOT, file).replace(/\\/g, '/'), url: '/output/' + encodeURIComponent(name) + '.mp4', seconds: r.seconds });
       } finally { recording = false; }
