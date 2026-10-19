@@ -508,7 +508,7 @@ select.btn option { background: var(--panel-2); color: var(--text); font-weight:
 
 /* —— 右侧面板：紧凑一体式 3D 模块舱 —— */
 .panel {
-  width: 272px; display: flex; flex-direction: column; min-height: 0;
+  width: 304px; display: flex; flex-direction: column; min-height: 0;
   padding-bottom: 6px;
   background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 88%, var(--panel-3) 100%);
 }
@@ -533,12 +533,81 @@ select.btn option { background: var(--panel-2); color: var(--text); font-weight:
   border-color: var(--accent-lip);
   box-shadow: inset 0 2px 0 var(--btn-shine), inset 0 -3.5px 0 var(--accent), 0 3px 8px rgba(28, 181, 126, 0.16);
 }
-.tab-body { flex: 1; overflow: auto; padding: 14px 14px 20px; min-height: 0; }
+.tab-body { flex: 1; overflow: auto; padding: 12px 13px 18px; min-height: 0; }
 .tab-body[hidden], .empty[hidden] { display: none !important; }
 .tab-body.flex { display: flex; flex-direction: column; gap: 10px; }
 
-.detail h3 { margin: 0 0 6px; font-size: 17px; font-weight: 800; line-height: 1.35; letter-spacing: -0.015em; }
-.detail .meta { color: var(--text-2); font-size: 12px; font-weight: 600; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.detail h3 { margin: 0 0 5px; font-size: 16.5px; font-weight: 800; line-height: 1.32; letter-spacing: -0.015em; }
+.detail .meta { color: var(--text-2); font-size: 11.5px; font-weight: 600; margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* —— 最简测试用例 & 使用前后对比（一体式 3D 实验舱卡片） —— */
+.tc-card {
+  margin: 0 0 12px;
+  padding: 10px 10px 13px;
+  border-radius: 15px;
+  border: 1.8px solid var(--border-3d);
+  background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 84%, var(--panel-3) 100%);
+  box-shadow: inset 0 2px 0 var(--btn-shine), inset 0 -4.5px 0 var(--btn-lip), inset 0 -6.5px 3px var(--bevel-blend), 0 4px 10px rgba(92, 76, 48, 0.09);
+}
+.tc-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-bottom: 7px;
+}
+.tc-title {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12.5px; font-weight: 800; color: var(--text); letter-spacing: -0.01em;
+}
+.tc-title svg { color: var(--warn); stroke-width: 2.4; }
+.tc-copy {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2.5px 8px 4.5px; border-radius: 8px;
+  border: 1.5px solid var(--btn-border);
+  background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 80%, var(--panel-3) 100%);
+  color: var(--text-2); font-size: 11px; font-weight: 700;
+  box-shadow: inset 0 1.5px 0 var(--btn-shine), inset 0 -2.5px 0 var(--btn-lip);
+  transition: transform 0.08s, border-color 0.12s, color 0.12s;
+}
+.tc-copy:hover {
+  color: var(--text); border-color: var(--accent-lip);
+  transform: translateY(-1px);
+}
+.tc-copy:active { transform: translateY(1.5px); }
+.tc-copy svg { color: var(--accent); }
+.tc-prompt {
+  padding: 7px 9px; margin-bottom: 8px;
+  background: var(--slot-bg);
+  border: 1.6px solid var(--line-2); border-radius: 10px;
+  box-shadow: inset 0 2px 3px var(--slot-shadow), 0 1px 0 var(--rim-shine);
+  color: var(--text); font-size: 12px; font-weight: 700; line-height: 1.48;
+}
+.tc-diff { display: flex; flex-direction: column; gap: 6px; }
+.tc-box {
+  padding: 7px 9px 9.5px; border-radius: 11px;
+  border: 1.6px solid var(--line-2);
+  font-size: 11.5px; line-height: 1.48;
+}
+.tc-box p { margin: 3px 0 0; color: var(--text-2); font-weight: 500; }
+.tc-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.01em;
+}
+.tc-before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 7%, var(--panel-2)) 0%, color-mix(in srgb, var(--danger) 11%, var(--panel)) 100%);
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line-2));
+  box-shadow: inset 0 1.5px 0 var(--btn-shine), inset 0 -3px 0 color-mix(in srgb, var(--danger) 42%, var(--btn-lip));
+}
+.tc-before .tc-tag { color: var(--danger); }
+.tc-before .tc-tag::before { content: "✕"; font-weight: 900; font-size: 10.5px; }
+.tc-after {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--panel-2)) 0%, color-mix(in srgb, var(--accent) 16%, var(--panel)) 100%);
+  border-color: var(--accent-lip);
+  box-shadow: inset 0 1.5px 0 var(--btn-shine), inset 0 -3px 0 var(--accent-lip);
+}
+.tc-after .tc-tag { color: var(--accent-lip); }
+:root:not([data-ui="light"]) .tc-after .tc-tag { color: var(--accent); }
+.tc-after .tc-tag::before { content: "✓"; font-weight: 900; font-size: 11px; }
+.tc-after p { color: var(--text); font-weight: 600; }
+
 .detail .md { color: var(--text-2); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .detail .md h2, .detail .md h3, .detail .md h4 { color: var(--text); font-size: 14px; font-weight: 800; margin: 14px 0 5px; }
 .detail .md p { margin: 5px 0; }

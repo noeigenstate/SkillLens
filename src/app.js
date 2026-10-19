@@ -925,6 +925,396 @@
     renderDetail();
   }
 
+  const SKILL_TEST_CASES = {
+    'skilllens': {
+      input: '把 skills/skilllens/SKILL.md 拖入页面，检查各步骤连线并点击「导出 → 独立网页」',
+      before: '只能阅读数百行纯文本 Markdown，步骤跳转、判断分支与参考文件依赖需人工逐段脑补。',
+      after: '自动提取为分泳道 3D 交互流程图，直观展示判断菱形、回环虚线与文件读取关系，支持一键导出。',
+    },
+    'review-loop': {
+      input: '审查当前仓库的新合并请求（#42），跑完测试套件并对高风险改动给出行内修改意见',
+      before: '仅凭肉眼扫代码给笼统建议，容易漏跑单测，也不会在修复推送后自动触发复审闭环。',
+      after: '严格按「自动跑测试 → 仅读变更上下文 → 评估缺陷与安全风险 → 人工拍板合并」闭环执行。',
+    },
+    'faceless-explainer': {
+      input: '把这段 200 字的「番茄工作法」笔记做成一条 30 秒无出镜知识讲解视频',
+      before: '只输出一段纯文字口播稿，没有统一视觉规范、分镜脚本、词级字幕时间轴与动态画面代码。',
+      after: '按「简报→视觉规范→分镜脚本→配音合成→逐镜网页画面构建」全链路产出可渲染视频工程。',
+    },
+    'general-video': {
+      input: '为新款降噪耳机做一条 15 秒功能亮点短片，包含人声旁白、背景音乐闪避与节奏卡点',
+      before: '只给文字分镜设想，无法落盘工程目录、合成音轨或校验每个镜头的画面排版质量。',
+      after: '自动初始化视频工程，完成「分镜脚本→配音混音→逐镜画面合成→逐帧质检→导出视频」闭环。',
+    },
+    'product-launch-video': {
+      input: '为刚上线的「极速笔记 2.0」制作一条 45 秒产品发布宣传片，突出三项核心新功能',
+      before: '平铺直叙罗列功能点，缺乏痛点开场钩子、界面特写推拉运镜与情绪高潮节奏。',
+      after: '按发布会叙事弧线编排「痛点钩子→真实界面特写运镜→节奏卡点展示→品牌收尾」并输出合成工程。',
+    },
+    'hyperframes': {
+      input: '我想用代码做一个带配音和丝滑转场的 20 秒产品介绍视频，帮我规划并启动超帧工程',
+      before: '不清楚该选哪种工作流与子工具，手写网页动画容易出现音画不同步与录屏掉帧。',
+      after: '自动匹配最佳视频工作流，串联创意指导、关键帧运镜、音频混音与命令行无损渲染。',
+    },
+    'hyperframes-animation': {
+      input: '给标题卡片写一段入场动效：先弹性放大，停顿 0.8 秒后平滑上移并淡出副标题',
+      before: '用普通 CSS 过渡糊弄，缓动生硬，且在视频录制跳帧采样时动画时间轴会错乱。',
+      after: '基于确定性帧率时间轴与物理弹簧/贝塞尔曲线编写动效，任意时间点定点采样完全一致。',
+    },
+    'hyperframes-audio': {
+      input: '把旁白 voice.mp3 和背景乐 bgm.mp3 混音，有人声时背景乐自动压低 12dB，首尾淡入淡出',
+      before: '背景音乐与人声直接叠加互相打架，音量忽大忽小，结尾生硬切断。',
+      after: '自动计算人声包络实现背景乐平滑闪避（Ducking）、响度标准化与首尾自然淡入淡出。',
+    },
+    'hyperframes-cli': {
+      input: '初始化一个 1080p 60帧的超帧视频工程，跑通画面校验并导出为高清 MP4',
+      before: '手动拼凑构建脚本与编码参数，常因缺依赖、尺寸不对或编码格式不兼容而中途报错。',
+      after: '按标准命令行循环完成「工程初始化 → 组件挂载 → 逐帧体检 → 硬件加速导出高清视频」。',
+    },
+    'hyperframes-core': {
+      input: '构建一个由 3 个分镜组成的合成序列，总长 12 秒，镜头之间带 0.5 秒叠化转场',
+      before: '各镜头独立写死绝对时间，修改第一个镜头时长后，后续所有镜头时间轴全部错位。',
+      after: '用声明式合成契约管理镜头树与相对时间轴，修改任一镜头自动重排全局转场与总时长。',
+    },
+    'hyperframes-creative': {
+      input: '我要做一期讲「量子计算原理」的科普短片，帮我定一套不俗套的视觉配色与排版规范',
+      before: '默认做成千篇一律的蓝紫渐变科技风模板，信息堆砌、缺乏视觉层级与留白。',
+      after: '输出完整的《视觉创意指导书》（色彩令牌、字体阶梯、构图网格与情绪板），统一全片审美。',
+    },
+    'hyperframes-keyframes': {
+      input: '在 3 秒内将镜头从全景 100% 推近到左上角按钮（放大 2.4 倍），带微妙三维俯仰角',
+      before: '简单粗暴地缩放整个画面容器，边缘模糊锯齿且运动起止生硬卡顿。',
+      after: '通过三维摄像机矩阵关键帧插值实现电影级推拉摇移，运动自带物理惯性与丝滑阻尼。',
+    },
+    'hyperframes-registry': {
+      input: '在当前视频工程中引入「终端打字机」与「代码高亮对比」两个预设画面组件',
+      before: '每次都从零手写复杂的终端窗口与代码高亮样式，耗时且容易出现排版错位。',
+      after: '直接从组件仓库检索并注入经过验证的标准化高颜值视觉组件，即插即用。',
+    },
+    'hyperframes-studio': {
+      input: '打开超帧预览工作台，定位到第 04 号分镜第 2.5 秒检查字幕遮挡问题并实时微调',
+      before: '每次改一行样式都要重新渲染整条视频才能看效果，调试反馈周期极长。',
+      after: '启动可视化预览工作台，支持时间轴逐帧拖拽、单帧定格审查与热更新微调。',
+    },
+    'media-use': {
+      input: '把素材库里的 demo.mov 截取前 5 秒静音片段，转为 1080p 标准格式挂载到第 2 分镜',
+      before: '直接塞入原始大体积视频导致页面卡顿、宽高比拉伸变形或音轨冲突。',
+      after: '先探测媒体元数据，自动完成裁剪、转码、抽帧或抠像预处理后再安全接入工程。',
+    },
+    'built-in-browser': {
+      input: '在内置浏览器打开 http://localhost:3000，点击登录按钮并截图检查页面布局与报错',
+      before: '只能静态阅读源码猜测界面效果，看不到真实的样式错位与控制台运行时报错。',
+      after: '驱动内置浏览器真实渲染页面，自动完成点击交互、控制台日志捕获与视觉截图核验。',
+    },
+    'control-in-app-browser': {
+      input: '在应用内浏览器打开本地开发页，模拟移动端视口并检查导航菜单展开效果',
+      before: '脱离真实渲染环境盲改 CSS，响应式断点与交互状态经常漏测。',
+      after: '直接在应用内浏览器加载目标网址，实时操控 DOM 并通过截图闭环验证视觉效果。',
+    },
+    'chrome-browser': {
+      input: '协同我当前已打开的谷歌浏览器标签页，提取后台报表页前 20 条异常订单记录',
+      before: '新建无头浏览器没有登录态，遇到扫码登录或双因素认证直接卡死无法继续。',
+      after: '直接复用当前已登录的真实浏览器会话，安全读取页面数据并执行自动化填表点击。',
+    },
+    'control-chrome': {
+      input: '控制当前 Chrome 浏览器打开测试后台，自动填写筛选条件并导出校验结果',
+      before: '手工重复点击几十次表单项，繁琐易错且无法自动记录每步截图证据。',
+      after: '自动接管浏览器标签页完成定位、输入、点击与结果断言，全程高效零失误。',
+    },
+    'computer-use': {
+      input: '把桌面上「待整理」文件夹里的发票图片按画面中的开票日期重命名并归档',
+      before: '受限于命令行沙箱，无法操作桌面图形软件或查看非文本文件内容。',
+      after: '通过屏幕视觉感知与键鼠操控闭环，像真人一样观察窗口、执行操作并逐一核对结果。',
+    },
+    'deep-research': {
+      input: '深度调研 2026 年主流端侧小模型推理框架的性能实测对比，要求附带一手评测出处',
+      before: '泛泛罗列几个常见框架名称，数据过时笼统且没有可核查的真实来源链接。',
+      after: '拆解多维检索计划，交叉比对官方文档与基准测试，输出带精确引用的结构化深度报告。',
+    },
+    'docx': {
+      input: '把这份 Markdown 技术方案转换为带封面、自动目录、三级标题样式和表格边框的 Word 文档',
+      before: '直接复制粘贴导致格式错乱、标题没有大纲层级、表格跨页断行难看。',
+      after: '按文档工程规范生成带标准样式表、页眉页脚、自动目录与对齐表格的 .docx 文件。',
+    },
+    'docs': {
+      input: '读取团队在线协作文档中的需求变更记录，整理出今日待开发接口清单并回写状态',
+      before: '手动在浏览器复制粘贴文档内容，格式丢失且改完代码后忘了同步更新文档状态。',
+      after: '直接连接在线文档接口结构化读取章节与表格，完成后自动回写最新进度。',
+    },
+    'pdf': {
+      input: '提取这份 30 页财报 PDF 第 5–8 页的合并利润表数据，并将两份补充协议合并到末尾',
+      before: '纯文本抽取把双栏排版与表格列完全打乱，跨行数字错位无法使用。',
+      after: '精准解析 PDF 版面结构提取表格行列，支持无损页面拆分、合并、表单填写与水印处理。',
+    },
+    'pptx': {
+      input: '根据这份季度复盘提纲生成一套 8 页汇报演示文稿，包含核心指标卡片页与下季路线图',
+      before: '每页塞满密密麻麻的项目符号列表，字号过小、缺乏视觉重心与版式变化。',
+      after: '按演示设计规范自动排版封面、大字结论页、三栏数据对比页与时间轴页，导出标准 .pptx。',
+    },
+    'xlsx': {
+      input: '生成一份月度销售明细电子表格，自动用公式计算环比增长率，并对负增长标红高亮',
+      before: '只导出死板的纯文本 CSV 数字，没有动态计算公式、千分位格式或条件高亮。',
+      after: '构建带冻结首行、动态公式（SUM/IF）、货币百分比格式与条件高亮规则的标准 .xlsx 表格。',
+    },
+    'skill-creator': {
+      input: '把这套「每周自动抓取竞品更新并生成日报」的操作流程打包为一个标准可复用技能',
+      before: '随便写一段零散提示词，触发时机模糊，换个对话窗口就不按步骤执行。',
+      after: '按标准技能架构生成元数据触发条件、分阶段工作流、配套参考脚本与自检用例。',
+    },
+    'chibi-character': {
+      input: '把这张写实风格的程序员照片转成二头身 Q 版卡通立绘，保留黑框眼镜与格子衫特征',
+      before: '头身比例飘忽不定，五官过于写实或丢失原人物标志性的穿搭细节。',
+      after: '严格锁定二头身大头萌系比例，精准提炼服饰特征并输出干净轮廓线的 Q 版角色图。',
+    },
+    'concept-sheet': {
+      input: '为一位穿赛博机能风斗篷的角色生成包含正、侧、背三视图与面部表情的角色设定图',
+      before: '不同角度的人物服装结构、配色与身高比例前后不一致，无法直接用于下游建模。',
+      after: '在同一张设定板上对齐绘制标准正/侧/背正交三视图、局部配饰拆解与标准色卡。',
+    },
+    'imagegen': {
+      input: '生成一张奶白3D卡通积木风格的「智能工厂流水线」等轴测插画，16:9 宽屏，柔和暖光',
+      before: '提示词过于简略导致画面构图杂乱、光影塑料感重，分辨率与比例不合要求。',
+      after: '自动扩充材质、镜头焦段与布光提示词，调用生图工具落盘高清原图并校验画面细节。',
+    },
+    'review-agent': {
+      input: '对当前未提交的 Git 改动做一次严格代码审查，重点排查空指针、并发竞态与安全隐患',
+      before: '只挑变量命名或缩进等表面毛病，漏掉真正会导致线上崩溃的边界逻辑漏洞。',
+      after: '逐文件追踪调用链与边界条件，按「严重等级 + 触发条件 + 修复代码」输出结构化审查报告。',
+    },
+    'create-plan': {
+      input: '我们要给现有系统接入扫码登录与权限分级，先不要改代码，帮我制定一份可执行的实施方案',
+      before: '一上来就盲目修改源码，改到一半发现数据表字段与现有鉴权中间件全冲突。',
+      after: '先扫描代码库上下文，输出「架构影响面、数据迁移步骤、分步里程碑与验证清单」供确认。',
+    },
+    'design-taste-frontend': {
+      input: '设计并实现一个独立播客订阅主页，要求温暖奶油杂志质感、立体卡片微交互与自适应布局',
+      before: '做出千篇一律的紫蓝渐变模板页，间距死板、字体缺乏层级、审美廉价。',
+      after: '运用高阶前端审美规范定制色彩令牌、字体阶梯、细腻阴影与物理感微交互，交付精品界面。',
+    },
+    'frontend-skill': {
+      input: '实现一个支持拖拽排序、状态筛选与空状态动画的看板页面，要求零控制台报错',
+      before: '只写静态骨架，缺少加载态、空状态、键盘无障碍支持与移动端响应式适配。',
+      after: '按完整前端工程标准交付组件拆分、完备交互状态、响应式布局并通过浏览器实测校验。',
+    },
+    'figma-implement-design': {
+      input: '读取这个 Figma 设计稿节点，1:1 还原为响应式组件代码并对齐所有间距与颜色变量',
+      before: '靠肉眼看图估测像素尺寸与色值，做出来的页面与设计稿偏差明显。',
+      after: '直接提取设计稿精确图层参数、自动布局约束与设计令牌，像素级还原为干净前端代码。',
+    },
+    'i-have-adhd': {
+      input: '我手头积压了 5 个需求外加一堆报错完全不知道从哪开始，帮我拆解并带着我一步步做完',
+      before: '一次性抛出长篇大论的 20 条规划建议，产生信息过载，看得更加焦虑无从下手。',
+      after: '屏蔽干扰，每次只给「当前唯一一个 5 分钟内可完成的小动作」，做完一步再解锁下一步。',
+    },
+    'img2threejs': {
+      input: '把这张复古书房插画转换成可在网页中拖动旋转查看的 Three.js 三维立体场景',
+      before: '只贴一张平面图或随便摆几个毫无关联的几何体，缺乏空间纵深与光影还原。',
+      after: '拆解画面前景/中景/背景层次，构建三维网格、材质贴图、环境灯光与交互相机控制器。',
+    },
+    'project-weekly-report': {
+      input: '汇总本周 Git 提交记录与已完成任务，生成一份面向管理层的项目周报',
+      before: '直接把枯燥的 git commit 流水账贴出来，看不出业务进展、核心成果与潜在风险。',
+      after: '自动提炼为「本周核心成果、关键指标进展、下周计划与需协调风险」四维结构化周报。',
+    },
+    'wechat-sticker': {
+      input: '用这只橘猫角色做一套 6 张「打工人日常（收到、下班、汗流浃背）」微信透明底表情包',
+      before: '生成的图片带杂色背景、画风前后不一、文字太小在手机聊天窗口里根本看不清。',
+      after: '固定角色特征生成系列动作，自动抠除透明背景、叠加醒目描边大字并裁切为 240×240 规范尺寸。',
+    },
+    'speech-to-text': {
+      input: '把这段 10 分钟的录音文件 meeting.m4a 转写为带时间戳与分段标点的会议纪要',
+      before: '输出一大段没有标点分段的原始语音识别流水账，口语废话多且难以阅读。',
+      after: '高精度转写语音并自动断句分段、标记关键时间节点，同步提炼结构化结论与待办清单。',
+    },
+    'text-to-speech': {
+      input: '把这段 300 字的产品解说词合成为温和自然的中文配音音频，并输出字幕对齐时间轴',
+      before: '机械朗读感重，数字与专有名词读音生硬，且没有配套的词句时间轴文件。',
+      after: '优化多音字与气口停顿，生成自然流畅的人声配音，同步输出精确对齐的字幕时间轴。',
+    },
+    'visualize': {
+      input: '把这份各渠道月度获客成本与留存率数据做成一张直观的交互式对比图表',
+      before: '随便画一张默认柱状图，双轴量纲混乱、配色刺眼，一眼看不出核心业务结论。',
+      after: '根据数据特征匹配最佳图表形态，高亮极值拐点与核心结论，输出高可读性交互图表。',
+    },
+    'morning': {
+      input: '生成我今天的晨间简报：汇总今日会议日程、高优待办与需要关注的重点事项',
+      before: '早上要在日历、消息和待办软件之间来回切换翻找，容易漏掉时间冲突。',
+      after: '自动聚合多源日程与待办，按时间线与优先级浓缩为 1 分钟可读完的今日行动指南。',
+    },
+    'import-memory': {
+      input: '把我之前整理的个人技术栈偏好与项目约定笔记导入到当前智能体的长期记忆中',
+      before: '开启新对话后一切归零，每次都要重复交代代码规范、目录结构与个人偏好。',
+      after: '清洗并结构化提炼历史偏好条目，持久化写入本地记忆库，后续对话自动生效。',
+    },
+    'tdd': {
+      input: '用测试驱动开发（TDD）实现一个支持阶梯满减与封顶折扣的订单金额计算函数',
+      before: '先写完业务代码再补测试，测试往往迁就已有实现，漏掉金额为负或临界值等边界情况。',
+      after: '严格执行「先写失败红灯测试 → 写最简代码变绿 → 重构优化」循环，边界条件 100% 覆盖。',
+    },
+    'grill-me': {
+      input: '我想做一个「自动帮用户回复工作消息」的工具，先别写代码，用深度追问帮我把漏洞问透',
+      before: 'AI 顺着你的想法一通夸赞并直接开写，完全忽略误发兜底、权限边界与隐私风险。',
+      after: '像资深架构师一样逐轮犀利追问核心假设、极端异常与回滚方案，把模糊想法打磨成严密方案。',
+    },
+    'diagnosing-bugs': {
+      input: '列表页在快速切换筛选条件时偶发数据串行闪烁，帮我科学排查根因并修复',
+      before: '靠猜乱加防抖或延时掩盖表面症状，没有验证根因，过几天换个网络环境依然复现。',
+      after: '按「稳定复现 → 二分缩小范围 → 埋点验证假设 → 锁定异步竞态根因并补回归测试」闭环排障。',
+    },
+    'resolving-merge-conflicts': {
+      input: '当前分支合并 main 时在订单模块出现了 4 处冲突，帮我结合两边提交意图安全解决',
+      before: '机械保留某一边代码，不小心把队友刚修好的安全补丁或新字段直接覆盖丢了。',
+      after: '先追溯双方分支的 commit 意图与上下文，精准融合两边逻辑并通过编译与单测验证。',
+    },
+    'photo-cull': {
+      input: '从这组连拍的 12 张聚会合照里挑出最佳的 2 张，剔除闭眼、手抖模糊和表情崩坏的废片',
+      before: '人工一张张放大对比眼睛和清晰度，耗时眼花，或者随机乱选留了闭眼照。',
+      after: '逐张检测清晰度、人物睁眼状态、表情自然度与构图评分，输出最佳推荐照片与淘汰原因。',
+    },
+    'photo-card': {
+      input: '为这张旅行照片生成结构化照片信息卡：提取画面细节、图中文字及时间地点线索',
+      before: '只给一句笼统的「这是一张风景照」，丢失招牌文字、地标建筑与事件上下文线索。',
+      after: '输出包含客观画面描述、OCR 文字、带置信度的地点/时间/事件推断与待确认项的标准信息卡。',
+    },
+    'life-butler': {
+      input: '问人生管家：「我去年秋天和谁一起去过杭州？当时拍了哪些有意思的照片？」',
+      before: '普通 AI 没有个人真实经历记忆，只能回答「我不知道你的私人行程」或胡乱编造。',
+      after: '检索个人世界模型中的事件、城市、人物关系与照片卡，给出有真实照片依据的温暖回答。',
+    },
+    'evidence-article-pipeline': {
+      input: '围绕「端侧 AI 芯片能耗拐点」写一篇深度公众号文章，要求所有论据都有交叉核实的一手来源',
+      before: '直接用大模型记忆生成充满套话的营销味水文，数据张冠李戴且经不起事实核查。',
+      after: '先执行多轮全网搜集、事实清洗与信息饱和判断，再基于真实证据链撰写严谨深度长文。',
+    },
+    'image-to-3d': {
+      input: '根据这张卡通人物的正/侧/背三视图，生成与原画剪影和配色一致的低多边形 3D 角色模型',
+      before: '直接单图生成的 3D 模型背面糊成一团、身材比例走样、贴图颜色脏乱。',
+      after: '按「生成基模 → 剪影拟合校正 → 按原画分部件精细上色 → 多角度质检」产出还原度极高的 3D 模型。',
+    },
+    'video-qc': {
+      input: '对刚生成的 15 秒人物短片做全片质检，排查手部变形、画面卡顿与前后人物穿帮并自动修复',
+      before: '带着画面崩坏或闪烁硬伤直接发布，或者因为局部 1 秒瑕疵把整条视频全部重做。',
+      after: '逐帧扫描定位变形、模糊与不连贯片段，用局部插帧、重绘或剪辑替换精准修复成片。',
+    },
+  };
+
+  const tcCache = Object.assign({}, window.SV_TESTCASES || {});
+  const tcInflight = new Set();
+  async function requestTestCase(s, key) {
+    if (!state.server || !s || tcInflight.has(key) || tcCache[key]) return;
+    tcInflight.add(key);
+    try {
+      const r = await fetch('api/testcase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: s.id, name: s.name, description: s.description, text: (s.text || '').slice(0, 3200) }),
+      });
+      const j = await r.json();
+      if (j && j.ok && j.tc && j.tc.input) {
+        tcCache[key] = j.tc;
+        if (state.currentId === s.id && !state.selected) renderDetail();
+      }
+    } catch { /* ignore when Ollama is offline */ }
+    finally { tcInflight.delete(key); }
+  }
+
+  function buildSkillTestCase(s, sp) {
+    const rawName = String((s && s.name) || (sp && sp.name) || '').toLowerCase();
+    const dispName = (sp && sp.title) || skillDisplayName(s) || rawName;
+    if (state.lang === 'en') {
+      const flowNodes = (sp && sp.lanes ? sp.lanes : []).filter(l => l.kind !== 'ref').flatMap(l => l.nodes || []);
+      const first = flowNodes[0] ? flowNodes[0].title : 'initial check';
+      const last = flowNodes.length > 1 ? flowNodes[flowNodes.length - 1].title : 'final output';
+      return {
+        input: `Run "${dispName}" on a minimal sample input and walk through "${first}" to "${last}".`,
+        before: `Ad-hoc one-shot response that skips "${first}" validation and produces unstructured output.`,
+        after: `Follows the ${flowNodes.length || 3}-step workflow (${first} → … → ${last}) to deliver verified, structured results.`,
+      };
+    }
+    if (tcCache[rawName]) return tcCache[rawName];
+    if (SKILL_TEST_CASES[rawName]) return SKILL_TEST_CASES[rawName];
+    const slug = rawName.replace(/[^a-z0-9]+/g, '-');
+    if (tcCache[slug]) return tcCache[slug];
+    if (SKILL_TEST_CASES[slug]) return SKILL_TEST_CASES[slug];
+    if (s && state.server) requestTestCase(s, rawName);
+
+    const flowNodes = (sp && sp.lanes ? sp.lanes : []).filter(l => l.kind !== 'ref').flatMap(l => l.nodes || []);
+    const stepTitles = flowNodes.map(n => n.title).filter(Boolean);
+    const firstStep = stepTitles[0] || '环境预检与输入解析';
+    const midStep = stepTitles[Math.floor(stepTitles.length / 2)] || '核心处理';
+    const lastStep = stepTitles[stepTitles.length - 1] || '结构化交付';
+    const decNode = flowNodes.find(n => n.type === 'decision');
+    const chain = stepTitles.length >= 3
+      ? `${firstStep} → ${midStep} → ${lastStep}`
+      : stepTitles.length === 2
+        ? `${firstStep} → ${lastStep}`
+        : firstStep;
+    const hay = `${rawName} ${dispName} ${(s && s.description) || ''} ${(sp && sp.description) || ''}`.toLowerCase();
+
+    if (/video|film|animat|remotion|clip|caption|audio|voice|speech|配音|视频|动画|分镜|字幕/.test(hay)) {
+      return {
+        input: `用「${dispName}」处理一段 15 秒的测试素材，按流程跑通「${firstStep}」到「${lastStep}」并输出预览`,
+        before: `仅输出零散文字脚本或粗糙参数，缺少「${firstStep}」把关，容易出现音画不同步或排版错位。`,
+        after: `严格遵循「${chain}」标准流水线，完成时间轴对齐与质量核验，直接产出可播放的规范成品。`,
+      };
+    }
+    if (/review|bug|debug|test|tdd|qc|security|audit|diagnos|fix|conflict|审查|测试|缺陷|诊断|冲突|安全/.test(hay)) {
+      return {
+        input: `针对当前改动或最小复现用例运行「${dispName}」，完成「${firstStep}」并输出验证结论`,
+        before: `凭直觉扫一眼代码直接猜结论，跳过「${firstStep}」与边界验证，极易漏掉深层隐患。`,
+        after: `按「${chain}」闭环排查${decNode ? `，通过「${decNode.title}」严格把关` : ''}，给出带根因证据的可验证修复方案。`,
+      };
+    }
+    if (/doc|pdf|ppt|slide|xls|sheet|excel|report|memo|article|write|readme|changelog|文档|报告|周报|文章|表格|演示/.test(hay)) {
+      return {
+        input: `给出一份 3 条要点的测试提纲，用「${dispName}」生成排版规范的成品文件`,
+        before: `直接生成一段纯文本大纲，格式简陋、层级混乱，还需要人工花大量时间重新排版。`,
+        after: `经过「${chain}」规范化处理，自动套用专业版式、结构层级与校验规则，输出可直接交付的文档。`,
+      };
+    }
+    if (/design|ui|frontend|figma|3d|image|photo|chibi|sticker|style|glass|map|scene|设计|前端|界面|照片|图像|三维|建模/.test(hay)) {
+      return {
+        input: `提供一张测试参考图或一句话需求，调用「${dispName}」完成从「${firstStep}」到「${lastStep}」的生成`,
+        before: `直接用笼统提示词一步直出，比例失调、细节粗糙且风格前后不一致。`,
+        after: `严格执行「${chain}」精修流程，统一设计令牌与空间结构，交付高还原度、高审美的视觉成品。`,
+      };
+    }
+    if (/deploy|cloud|vercel|netlify|render|docker|mcp|server|cli|setup|config|env|插件|部署|配置|服务|接口/.test(hay)) {
+      return {
+        input: `在当前测试目录启用「${dispName}」，按步骤完成「${firstStep}」并跑通连通性验证`,
+        before: `手动翻文档拼凑配置与命令，常因环境变量缺失、端口冲突或权限格式错误而反复报错。`,
+        after: `按「${chain}」自动化完成环境预检、配置写入与端到端健康检查，确保一次跑通。`,
+      };
+    }
+    return {
+      input: `给一个最小测试任务：「用【${dispName}】跑通从“${firstStep}”到“${lastStep}”并展示结果」`,
+      before: `未加载技能时仅靠通用回答一步直出，跳过「${firstStep}」等关键约束，结果笼统且不可控。`,
+      after: `启用技能后严格按「${chain}」共 ${flowNodes.length || 1} 个核心步骤推进${decNode ? `，并经「${decNode.title}」校验` : ''}，产出标准可复现结果。`,
+    };
+  }
+
+  function renderTestCaseCard(s, sp) {
+    const tc = buildSkillTestCase(s, sp);
+    return `
+      <div class="tc-card">
+        <div class="tc-head">
+          <span class="tc-title">${iconSvg('sparkles', 14)}<span>${t('tc.title')}</span></span>
+          <button class="tc-copy" type="button" data-copy-prompt="${esc(tc.input)}">${iconSvg('clipboard-copy', 12)}<span>${t('tc.copy')}</span></button>
+        </div>
+        <div class="tc-prompt">${esc(tc.input)}</div>
+        <div class="tc-diff">
+          <div class="tc-box tc-before">
+            <div class="tc-tag">${t('tc.before')}</div>
+            <p>${esc(tc.before)}</p>
+          </div>
+          <div class="tc-box tc-after">
+            <div class="tc-tag">${t('tc.after')}</div>
+            <p>${esc(tc.after)}</p>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderDetail() {
     const el = $('#detail');
     const s = findSkill(state.currentId);
@@ -972,6 +1362,7 @@
     el.innerHTML = `
       <h3>${esc(sp.title || dispName)}</h3>
       <div class="meta"><span class="badge ${sp.source === 'auto' ? '' : 'flow'}">${srcName}</span><span>${esc(groupName(s))}</span></div>
+      ${renderTestCaseCard(s, sp)}
       <div class="md"><p>${esc(listDesc(s) || sp.description || t('detail.noDesc'))}</p></div>
       <div class="stats">
         <div class="stat"><b>${sp.lanes.length}</b><span>${t('detail.lanes')}</span></div>
@@ -1222,6 +1613,8 @@ SV.i18n.set('${state.lang}');
 
     $$('.tab').forEach(t => { t.onclick = () => showTab(t.dataset.tab); });
     $('#detail').addEventListener('click', e => {
+      const cp = e.target.closest('[data-copy-prompt]');
+      if (cp) { copy(cp.dataset.copyPrompt); toast(t('tc.copied')); return; }
       if (e.target.closest('[data-orig]')) { state.showOrig = !state.showOrig; renderDetail(); return; }
       const g = e.target.closest('[data-goto]');
       if (!g) return;

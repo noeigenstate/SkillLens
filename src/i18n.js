@@ -185,6 +185,11 @@ SV.mod.i18n = function (SV) {
       'tr.showOrig': '看原文',
       'tr.showTr': '看中文',
       'tr.translating': '正在翻译内容…',
+      'tc.title': '最简测试用例',
+      'tc.copy': '复制指令',
+      'tc.copied': '已复制测试指令，可直接粘贴试用',
+      'tc.before': '使用前 · 普通直出',
+      'tc.after': '使用后 · 技能赋能',
     },
     en: {
       'app.title': 'SkillLens',
@@ -368,6 +373,11 @@ SV.mod.i18n = function (SV) {
       'tr.showOrig': 'original',
       'tr.showTr': 'translation',
       'tr.translating': 'Translating the source text…',
+      'tc.title': 'Minimal test case',
+      'tc.copy': 'Copy prompt',
+      'tc.copied': 'Test prompt copied to clipboard',
+      'tc.before': 'Before · Without skill',
+      'tc.after': 'After · With skill',
     },
   };
 

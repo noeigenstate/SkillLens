@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { ROOT, resolveRoots, scan, version, summarize } from './lib/scan.mjs';
 import { fetchOfficial, officialStatus, search, fetchSkill } from './lib/online.mjs';
 import { record } from './lib/recorder.mjs';
-import { translate, detectBackend } from './lib/translate.mjs';
+import { translate, detectBackend, generateTestCase, getAllCachedTestCases, probeOllama } from './lib/translate.mjs';
 
 const argv = process.argv.slice(2);
 const portArg = argv.indexOf('--port');
@@ -47,6 +47,22 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/api/skills') return send(res, 200, skillsNow());
     if (url.pathname === '/api/version') return send(res, 200, version(roots), 'text/plain; charset=utf-8');
+    if (url.pathname === '/api/ollama' && req.method === 'GET') {
+      const ol = await probeOllama(true);
+      return send(res, 200, { ok: !!ol, ollama: ol });
+    }
+    if (url.pathname === '/api/testcase' && req.method === 'GET') {
+      return send(res, 200, { ok: true, map: getAllCachedTestCases() });
+    }
+    if (url.pathname === '/api/testcase' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      try {
+        const tc = await generateTestCase(body);
+        return send(res, 200, { ok: true, tc });
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message });
+      }
+    }
     if (url.pathname === '/api/translate' && req.method === 'GET') {
       const be = await detectBackend();
       return send(res, 200, { backend: be ? be.name : null });
@@ -108,16 +124,35 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '127.0.0.1', async () => {
   const langArg = argv.indexOf('--lang');
   const link = `http://localhost:${PORT}/` + (langArg >= 0 && argv[langArg + 1] ? `?lang=${encodeURIComponent(argv[langArg + 1])}` : '');
   const data = skillsNow();
   console.log(`SkillLens 已启动：${link}`);
   console.log(`当前扫描到 ${data.skills.length} 个 skill：`);
   for (const line of summarize(data)) console.log('  ' + line);
+  const be = await detectBackend();
+  if (be) console.log(`局域网大模型已就绪：${be.name}（单路并发队列）`);
   console.log('改了 SKILL.md 刷新页面就能看到。按 Ctrl+C 退出。');
   if (!argv.includes('--no-open')) {
     const cmd = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', link]] : process.platform === 'darwin' ? ['open', [link]] : ['xdg-open', [link]];
     try { spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true }).unref(); } catch { /* 手动打开即可 */ }
+  }
+  // 后台低优单路预热本机技能的「最简测试用例 + 使用前后对比」
+  if (be && be.ollama && !argv.includes('--no-warm')) {
+    (async () => {
+      const tcMap = getAllCachedTestCases();
+      const localSkills = data.skills.filter(s => s.kind !== 'catalog' && s.kind !== 'official' && s.groupKey !== 'market');
+      const seen = new Set();
+      for (const s of localSkills) {
+        const k = String(s.name || '').toLowerCase();
+        if (!k || seen.has(k) || (tcMap[k] && tcMap[k].input)) continue;
+        seen.add(k);
+        try {
+          await generateTestCase(s);
+          await new Promise(r => setTimeout(r, 250));
+        } catch { break; }
+      }
+    })();
   }
 });

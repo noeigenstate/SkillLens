@@ -16,6 +16,7 @@
     "scan": "node scripts/scan.mjs",
     "scan:project": "node scripts/scan.mjs --project-only",
     "fetch": "node scripts/fetch-official.mjs",
-    "record": "node scripts/record.mjs"
+    "record": "node scripts/record.mjs",
+    "gen:testcases": "node scripts/gen-testcases.mjs"
   }
 }
