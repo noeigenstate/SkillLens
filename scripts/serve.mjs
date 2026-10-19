@@ -57,7 +57,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/testcase' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
       try {
-        const tc = await generateTestCase(body);
+        const tc = await generateTestCase(body, 'high');
         return send(res, 200, { ok: true, tc });
       } catch (e) {
         return send(res, 200, { ok: false, error: e.message });
@@ -70,7 +70,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/translate' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
       try {
-        const map = await translate(body.target, Array.isArray(body.items) ? body.items.slice(0, 500) : [], !!body.markdown);
+        const map = await translate(body.target, Array.isArray(body.items) ? body.items.slice(0, 500) : [], !!body.markdown, 'high');
         return send(res, 200, { ok: true, map });
       } catch (e) {
         console.error('翻译失败：' + e.message);
@@ -141,6 +141,8 @@ server.listen(PORT, '127.0.0.1', async () => {
   // 后台低优单路预热本机技能的「最简测试用例 + 使用前后对比」
   if (be && be.ollama && !argv.includes('--no-warm')) {
     (async () => {
+      // 服务就绪后延迟 3 秒再低优预热，绝不抢占前台页面的即时交互
+      await new Promise(r => setTimeout(r, 3000));
       const tcMap = getAllCachedTestCases();
       const localSkills = data.skills.filter(s => s.kind !== 'catalog' && s.kind !== 'official' && s.groupKey !== 'market');
       const seen = new Set();
@@ -149,8 +151,8 @@ server.listen(PORT, '127.0.0.1', async () => {
         if (!k || seen.has(k) || (tcMap[k] && tcMap[k].input)) continue;
         seen.add(k);
         try {
-          await generateTestCase(s);
-          await new Promise(r => setTimeout(r, 250));
+          await generateTestCase(s, 'low');
+          await new Promise(r => setTimeout(r, 600));
         } catch { break; }
       }
     })();

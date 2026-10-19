@@ -640,7 +640,7 @@
     (spec.edges || []).forEach(e => field(e, 'label'));
     (spec.stubs || []).forEach(x => { field(x, 'text'); field(x, 'label'); });
   }
-  function useTranslation() {
+  function useTranslation(isExplicit = false) {
     const raw = state.rawSpec;
     if (!raw) return;
     const lang = state.lang;
@@ -662,11 +662,11 @@
     state.trInfo.missing = missing.size;
     if (missing.size) requestTr([...missing], false, () => {
       if (state.rawSpec !== raw || state.lang !== lang) return;
-      useTranslation();
+      useTranslation(false);
       draw(true);
       renderHeader();
       renderDetail();
-    });
+    }, isExplicit);
     renderTrUi();
   }
   async function trBackend() {
@@ -675,7 +675,7 @@
     try { TR.backend = (await (await fetch('api/translate', { cache: 'no-store' })).json()).backend || null; } catch { TR.backend = null; }
     return TR.backend;
   }
-  async function requestTr(items, markdown, done) {
+  async function requestTr(items, markdown, done, isExplicit = false) {
     const lang = state.lang;
     const todo = items.filter(s => !TR.inflight.has(trKey(lang, s)));
     if (!todo.length) return;
@@ -693,7 +693,7 @@
       done && done();
     } catch (e) {
       state.trInfo.error = e.message;
-      toast(t('tr.fail', e.message), 6000);
+      if (isExplicit) toast(t('tr.fail', e.message), 5000);
     } finally {
       todo.forEach(s => TR.inflight.delete(trKey(lang, s)));
       state.trInfo.busy = TR.inflight.size > 0;
@@ -1598,10 +1598,11 @@ SV.i18n.set('${state.lang}');
     $('#btnTrans').onclick = () => {
       state.translate = !state.translate;
       store.set('translate', state.translate);
-      useTranslation();
+      useTranslation(true);
       draw(true);
       renderHeader();
       renderDetail();
+      if (!state.translate) toast(state.lang === 'zh' ? '已切回原文' : 'Switched to original', 1500);
     };
     $('#btnExitPresent').onclick = () => setPresent(false);
     $('#btnPanel').onclick = () => togglePanel();

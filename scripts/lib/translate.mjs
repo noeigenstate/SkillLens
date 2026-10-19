@@ -89,19 +89,41 @@ function directJsonRequest(urlStr, { method = 'GET', body = null, timeoutMs = 60
   });
 }
 
-/* 从模型返回文本中提取 JSON 对象 */
-function extractJsonObject(rawText) {
+/* 从模型返回文本中提取 JSON（支持 {"translations":[...]}、裸数组 [...]、带代码块或格式瑕疵） */
+function extractJsonAny(rawText) {
   const cleaned = String(rawText || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/^```(?:json)?\s*/im, '')
+    .replace(/\s*```$/m, '')
     .trim();
-  try { return JSON.parse(cleaned); } catch {
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
-    throw new Error('模型未返回有效 JSON：' + cleaned.slice(0, 160));
+
+  // 1. 直接解析
+  try { return JSON.parse(cleaned); } catch {}
+
+  // 2. 尝试提取包含的 { ... }
+  const sObj = cleaned.indexOf('{');
+  const eObj = cleaned.lastIndexOf('}');
+  if (sObj >= 0 && eObj > sObj) {
+    const sub = cleaned.slice(sObj, eObj + 1);
+    try { return JSON.parse(sub); } catch {
+      try { return JSON.parse(sub.replace(/,\s*([\]}])/g, '$1')); } catch {}
+    }
   }
+
+  // 3. 尝试提取包含的 [ ... ]
+  const sArr = cleaned.indexOf('[');
+  const eArr = cleaned.lastIndexOf(']');
+  if (sArr >= 0 && eArr > sArr) {
+    const sub = cleaned.slice(sArr, eArr + 1);
+    try { return JSON.parse(sub); } catch {
+      try { return JSON.parse(sub.replace(/,\s*([\]}])/g, '$1')); } catch {}
+    }
+  }
+
+  // 4. 清除尾随逗号重试
+  try { return JSON.parse(cleaned.replace(/,\s*([\]}])/g, '$1')); } catch {}
+
+  throw new Error('模型未返回有效 JSON：' + cleaned.slice(0, 160));
 }
 
 /* —— 后端零：局域网 Qwen (OpenAI 兼容 /v1/chat/completions) —— */
@@ -109,15 +131,14 @@ let resolvedOllama = undefined;
 export async function probeOllama(force = false) {
   if (resolvedOllama !== undefined && !force) return resolvedOllama;
   const cfg = getOllamaConfig();
+  const chatUrl = cfg.baseUrl.endsWith('/v1')
+    ? `${cfg.baseUrl}/chat/completions`
+    : `${cfg.baseUrl}/v1/chat/completions`;
   try {
-    // 优先探测 /v1/models 或直接用轻量 completion 验证
-    const chatUrl = cfg.baseUrl.endsWith('/v1')
-      ? `${cfg.baseUrl}/chat/completions`
-      : `${cfg.baseUrl}/v1/chat/completions`;
     const j = await directJsonRequest(chatUrl, {
       method: 'POST',
       apiKey: cfg.apiKey,
-      timeoutMs: 6000,
+      timeoutMs: 15000,
       body: {
         model: cfg.model,
         messages: [{ role: 'user', content: 'ok' }],
@@ -128,10 +149,10 @@ export async function probeOllama(force = false) {
     if (j && j.choices) {
       return (resolvedOllama = { url: cfg.baseUrl, chatUrl, model: cfg.model, apiKey: cfg.apiKey });
     }
-    return (resolvedOllama = null);
   } catch {
-    return (resolvedOllama = null);
+    if (resolvedOllama) return resolvedOllama;
   }
+  return (resolvedOllama = null);
 }
 
 async function viaLocalLlm(llm, target, items, markdown) {
@@ -151,9 +172,18 @@ async function viaLocalLlm(llm, target, items, markdown) {
     },
   });
   const content = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
-  const parsed = extractJsonObject(content);
-  if (!Array.isArray(parsed.translations)) throw new Error('返回 JSON 缺少 translations 数组');
-  return parsed.translations;
+  const parsed = extractJsonAny(content);
+  let list = null;
+  if (Array.isArray(parsed)) {
+    list = parsed;
+  } else if (parsed && Array.isArray(parsed.translations)) {
+    list = parsed.translations;
+  } else if (parsed && typeof parsed === 'object') {
+    const vals = Object.values(parsed);
+    if (vals.length && vals.every(v => typeof v === 'string')) list = vals;
+  }
+  if (!Array.isArray(list)) throw new Error('模型返回缺少 translations 译文数组');
+  return list;
 }
 
 function systemPrompt(target, markdown) {
@@ -235,6 +265,13 @@ export async function detectBackend(force = false) {
   if (llm && mode !== 'sdk' && mode !== 'claude') {
     return (backend = { name: `${llm.model} (${llm.url})`, ollama: llm, run: (t, i, m) => viaLocalLlm(llm, t, i, m) });
   }
+  // 如果默认配置了局域网地址（如 192.168.1.19:8000），绝不降级到已超限的 Claude
+  const cfg = getOllamaConfig();
+  if (cfg.baseUrl && (mode === 'ollama' || (!process.env.ANTHROPIC_API_KEY && !process.env.SV_CLAUDE && !mode))) {
+    const chatUrl = cfg.baseUrl.endsWith('/v1') ? `${cfg.baseUrl}/chat/completions` : `${cfg.baseUrl}/v1/chat/completions`;
+    const fallbackLlm = { url: cfg.baseUrl, chatUrl, model: cfg.model, apiKey: cfg.apiKey };
+    return (backend = { name: `${fallbackLlm.model} (${fallbackLlm.url})`, ollama: fallbackLlm, run: (t, i, m) => viaLocalLlm(fallbackLlm, t, i, m) });
+  }
   const Anthropic = await loadSdk();
   const hasKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
   if (Anthropic && (hasKey || mode === 'sdk')) return (backend = { name: 'sdk', run: (t, i, m) => viaSdk(Anthropic, t, i, m) });
@@ -243,21 +280,40 @@ export async function detectBackend(force = false) {
   return (backend = null);
 }
 
-/* —— 全局单路并发队列（适配服务端单路并发约束） —— */
-let llmQueue = Promise.resolve();
-function enqueueLlm(fn) {
-  const job = llmQueue.then(fn);
-  llmQueue = job.catch(() => {});
-  return job;
+/* —— 全局单路并发双优先级队列（前台交互优先，后台预热垫后） —— */
+const hiQueue = [];
+const loQueue = [];
+let queueRunning = false;
+
+function pumpQueue() {
+  if (queueRunning) return;
+  const task = hiQueue.shift() || loQueue.shift();
+  if (!task) return;
+  queueRunning = true;
+  Promise.resolve()
+    .then(task.fn)
+    .then(task.resolve, task.reject)
+    .finally(() => {
+      queueRunning = false;
+      pumpQueue();
+    });
+}
+
+export function enqueueLlm(fn, priority = 'high') {
+  return new Promise((resolve, reject) => {
+    if (priority === 'low') loQueue.push({ fn, resolve, reject });
+    else hiQueue.push({ fn, resolve, reject });
+    pumpQueue();
+  });
 }
 
 /* —— 用局域网 Qwen 为任意 skill 生成最简测试用例与使用前后对比 —— */
-export function generateTestCase(skill) {
+export function generateTestCase(skill, priority = 'high') {
   const k = String(skill.name || skill.id || '').toLowerCase();
   if (tcCache[k] && tcCache[k].input && tcCache[k].before && tcCache[k].after) {
     return Promise.resolve(tcCache[k]);
   }
-  return enqueueLlm(() => doGenerateTestCase(k, skill));
+  return enqueueLlm(() => doGenerateTestCase(k, skill), priority);
 }
 
 async function doGenerateTestCase(k, skill) {
@@ -290,7 +346,7 @@ async function doGenerateTestCase(k, skill) {
     },
   });
   const content = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
-  const parsed = extractJsonObject(content);
+  const parsed = extractJsonAny(content);
   if (parsed && parsed.input && parsed.before && parsed.after) {
     tcCache[k] = {
       input: String(parsed.input).trim(),
@@ -307,13 +363,13 @@ export function getAllCachedTestCases() {
   return tcCache;
 }
 
-/* 分批：短文本一批最多 40 条 / 4500 字，Markdown 一条一批 */
+/* 分批：短文本一批最多 15 条 / 1500 字，Markdown 一条一批（更轻更快） */
 function chunks(items, markdown) {
   if (markdown) return items.map(x => [x]);
   const out = [];
   let cur = [], size = 0;
   for (const s of items) {
-    if (cur.length && (cur.length >= 40 || size + s.length > 4500)) { out.push(cur); cur = []; size = 0; }
+    if (cur.length && (cur.length >= 15 || size + s.length > 1500)) { out.push(cur); cur = []; size = 0; }
     cur.push(s);
     size += s.length;
   }
@@ -321,8 +377,8 @@ function chunks(items, markdown) {
   return out;
 }
 
-export function translate(target, items, markdown = false) {
-  return enqueueLlm(() => doTranslate(target, items, markdown));
+export function translate(target, items, markdown = false, priority = 'high') {
+  return enqueueLlm(() => doTranslate(target, items, markdown), priority);
 }
 
 async function doTranslate(target, items, markdown) {
@@ -333,10 +389,19 @@ async function doTranslate(target, items, markdown) {
     const be = await detectBackend();
     if (!be) throw new Error('没有可用的模型后端：请检查局域网 http://192.168.1.19:8000/v1 连通性');
     for (const batch of chunks(missing, markdown)) {
-      const out = await be.run(target, batch, markdown);
-      if (!Array.isArray(out)) throw new Error('翻译结果格式不对');
-      batch.forEach((s, i) => { if (typeof out[i] === 'string' && out[i].trim()) cache[key(target, s)] = out[i]; });
-      saveCache();
+      try {
+        const out = await be.run(target, batch, markdown);
+        if (Array.isArray(out)) {
+          batch.forEach((s, i) => {
+            if (typeof out[i] === 'string' && out[i].trim()) {
+              cache[key(target, s)] = out[i].trim();
+            }
+          });
+          saveCache();
+        }
+      } catch (err) {
+        console.warn('翻译分批调用警告（继续处理后续分批）：', err.message);
+      }
     }
   }
   const map = {};
