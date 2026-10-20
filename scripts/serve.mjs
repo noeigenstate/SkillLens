@@ -124,6 +124,18 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on('error', e => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  const link = `http://localhost:${PORT}/`;
+  console.log(`端口 ${PORT} 已被占用，SkillLens 可能已在运行：${link}`);
+  console.log(`如需另开一个，请用 --port 指定其他端口，例如：node scripts/serve.mjs --port ${PORT + 1}`);
+  if (!argv.includes('--no-open')) {
+    const cmd = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', link]] : process.platform === 'darwin' ? ['open', [link]] : ['xdg-open', [link]];
+    try { spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true }).unref(); } catch { /* 手动打开即可 */ }
+  }
+  process.exit(0);
+});
+
 server.listen(PORT, '127.0.0.1', async () => {
   const langArg = argv.indexOf('--lang');
   const link = `http://localhost:${PORT}/` + (langArg >= 0 && argv[langArg + 1] ? `?lang=${encodeURIComponent(argv[langArg + 1])}` : '');
