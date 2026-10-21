@@ -12,6 +12,11 @@ SV.mod.extract = function (SV) {
     return n / t.length;
   };
 
+  /* 拼接用的冒号、分号跟随被拼接文字：有汉字用全角，否则半角，避免英文里冒出「：」「；」 */
+  const hasHan = s => /[㐀-鿿豈-﫿]/.test(String(s));
+  const colonFor = s => hasHan(s) ? '：' : ': ';
+  const joinFor = (parts, zh, en) => parts.join(parts.some(hasHan) ? zh : en);
+
   /* 按显示宽度截断，拉丁文尽量停在词边界 */
   function cut(s, max) {
     s = String(s || '').trim();
@@ -169,8 +174,8 @@ SV.mod.extract = function (SV) {
   function firstText(blocks) {
     for (const b of blocks || []) {
       if (b.type === 'paragraph') return md.strip(b.text);
-      if (b.type === 'list') return b.items.slice(0, 3).map(it => md.strip(it.text)).join('；');
-      if (b.type === 'table') return b.rows.slice(0, 2).map(r => md.strip(r[0])).join('；');
+      if (b.type === 'list') return joinFor(b.items.slice(0, 3).map(it => md.strip(it.text)), '；', '; ');
+      if (b.type === 'table') return joinFor(b.rows.slice(0, 2).map(r => md.strip(r[0])), '；', '; ');
       if (b.type === 'quote') return md.strip(b.text);
     }
     return '';
@@ -242,7 +247,7 @@ SV.mod.extract = function (SV) {
         const cells = item.cells.map(c => md.strip(c));
         title = cells[0] || '';
         rest = cells.slice(1).filter(Boolean).join(' · ');
-        detail = item.header.map((h, i) => `**${md.strip(h)}**：${item.cells[i] || ''}`).join('\n\n');
+        detail = item.header.map((h, i) => `**${md.strip(h)}**${colonFor(h + (item.cells[i] || ''))}${item.cells[i] || ''}`).join('\n\n');
         raw = cells.join(' ');
         tag = firstCode(item.cells[0]);
       } else if (item.kind === 'section') {
@@ -307,6 +312,7 @@ SV.mod.extract = function (SV) {
 
     function capNodes(nodes, ctx) {
       const MAX = 8;
+      if (opts.cap === false) return nodes;
       if (nodes.length <= MAX) return nodes;
       const keep = nodes.slice(0, MAX - 1);
       const rest = nodes.slice(MAX - 1);
@@ -366,6 +372,7 @@ SV.mod.extract = function (SV) {
     const COLORS = ['green', 'blue', 'purple', 'teal', 'rose', 'amber'];
     let colorIdx = 0;
     let singles = null;
+    const sectionSource = x => '## ' + x.s.title + '\n\n' + md.blocksToMd(x.s.blocks);
     /* 连续的单步章节合成一条「主流程」泳道；只有一个时不加框，像触发卡片那样单独一行 */
     const flushSingles = () => {
       if (!singles) return;
@@ -375,6 +382,7 @@ SV.mod.extract = function (SV) {
         title: bare ? singles[0].title : L.flow,
         tag: bare ? '' : L.stages(singles.length),
         nodes: capNodes(singles.map(x => x.node), { kind: 'flow' }), notes: [],
+        source: singles.map(x => x.source).join('\n\n'),
       });
       singles = null;
     };
@@ -390,11 +398,12 @@ SV.mod.extract = function (SV) {
           id: 'L' + (lanes.length + 1), kind: 'flow', color: COLORS[colorIdx++ % COLORS.length],
           title: x.title, tag: its.kind === 'decide' ? T('x.firstMatch') : L.steps(its.items.length), nodes, notes: [],
           num: x.numbered ? numOf(md.strip(x.s.title)) : null,
+          source: sectionSource(x),
         });
       } else {
         const node = nodeFrom({ kind: 'section', title: x.s.title, blocks: x.s.blocks }, { kind: 'flow', ordered: x.numbered });
         if (x.numbered) node.tag = T('x.stageTag', numOf(md.strip(x.s.title)));
-        (singles = singles || []).push({ title: x.title, node });
+        (singles = singles || []).push({ title: x.title, node, source: sectionSource(x) });
       }
     }
     flushSingles();
@@ -402,6 +411,7 @@ SV.mod.extract = function (SV) {
     /* —— 参考泳道 —— */
     const refSecs = secs.filter(x => x.cls === 'ref');
     const refSingles = [];
+    const refSources = [];
     let refLanes = 0;
     for (const x of refSecs) {
       if (x.its.items.length >= 2 && refLanes < 3) {
@@ -410,13 +420,15 @@ SV.mod.extract = function (SV) {
         lanes.push({
           id: 'L' + (lanes.length + 1), kind: 'ref', color: 'slate', title: x.title, tag: L.items(x.its.items.length),
           nodes: capNodes(x.its.items.map(it => nodeFrom(it, ctx)), ctx), notes: [],
+          source: sectionSource(x),
         });
       } else {
         refSingles.push(nodeFrom({ kind: 'section', title: x.s.title, blocks: x.s.blocks }, { kind: 'ref' }));
+        refSources.push(sectionSource(x));
       }
     }
     if (refSingles.length) {
-      lanes.push({ id: 'L' + (lanes.length + 1), kind: 'ref', color: 'slate', title: L.ref, tag: L.items(refSingles.length), nodes: capNodes(refSingles, { kind: 'ref' }), notes: [] });
+      lanes.push({ id: 'L' + (lanes.length + 1), kind: 'ref', color: 'slate', title: L.ref, tag: L.items(refSingles.length), nodes: capNodes(refSingles, { kind: 'ref' }), notes: [], source: refSources.join('\n\n') });
     }
 
     /* —— 规则 → 注释 —— */
@@ -424,9 +436,9 @@ SV.mod.extract = function (SV) {
       const its = x.its.items.length ? x.its.items : x.s.blocks.filter(b => b.type === 'paragraph').slice(0, 2).map(b => ({ kind: 'item', text: b.text, blocks: [] }));
       for (const it of its) {
         let text;
-        if (it.kind === 'sub') text = stripNum(md.strip(it.title)) + (firstText(it.blocks) ? '：' + firstText(it.blocks) : '');
-        else if (it.kind === 'row' || it.kind === 'rule') text = it.cells.map(c => md.strip(c)).filter(Boolean).join('：');
-        else { const sl = splitLead(it.text); text = sl.rest ? sl.title.replace(/…$/, '') + '：' + sl.rest : sl.title; }
+        if (it.kind === 'sub') { const ft = firstText(it.blocks), head = stripNum(md.strip(it.title)); text = ft ? head + colonFor(head + ft) + ft : head; }
+        else if (it.kind === 'row' || it.kind === 'rule') text = joinFor(it.cells.map(c => md.strip(c)).filter(Boolean), '：', ': ');
+        else { const sl = splitLead(it.text); text = sl.rest ? sl.title.replace(/…$/, '') + colonFor(sl.title + sl.rest) + sl.rest : sl.title; }
         notes.push({ text, detail: '## ' + x.s.title + '\n\n' + md.blocksToMd(x.s.blocks) });
       }
     }
@@ -434,16 +446,17 @@ SV.mod.extract = function (SV) {
     const framed = lanes.filter(l => l.kind === 'flow');
     if (notes.length && notes.length <= 3 && framed.length) {
       framed[framed.length - 1].notes = notes.map(n => n.text);
+      framed[framed.length - 1].source += '\n\n' + secs.filter(x => x.cls === 'rules' || x.cls === 'notuse').map(sectionSource).join('\n\n');
     } else if (notes.length) {
-      const shown = notes.slice(0, 7).map(n => n.text);
-      if (notes.length > 7) shown.push(L.more(notes.length - 7));
-      lanes.push({ id: 'L' + (lanes.length + 1), kind: 'notes', color: 'amber', title: L.rules, tag: L.items(notes.length), nodes: [], notes: shown });
+      const shown = (opts.cap === false ? notes : notes.slice(0, 7)).map(n => n.text);
+      if (opts.cap !== false && notes.length > 7) shown.push(L.more(notes.length - 7));
+      lanes.push({ id: 'L' + (lanes.length + 1), kind: 'notes', color: 'amber', title: L.rules, tag: L.items(notes.length), nodes: [], notes: shown, source: secs.filter(x => x.cls === 'rules' || x.cls === 'notuse').map(sectionSource).join('\n\n') });
     }
 
     /* —— 连线 —— */
     const trigger = (triggerText || desc) ? {
       id: 'start', type: 'trigger', title: L.trigger, tag: 'Trigger', icon: 'bell', lines: triggerText || firstSentence(desc),
-      detail: (desc ? '**description**：' + desc + '\n\n' : '') + triggerDetail,
+      detail: (desc ? '**description**' + colonFor(desc) + desc + '\n\n' : '') + triggerDetail,
     } : null;
     const chain = [];
     flowLanes.forEach(l => l.nodes.forEach(n => chain.push(n)));

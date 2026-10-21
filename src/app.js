@@ -17,57 +17,16 @@
   const hydrate = root => (root || document).querySelectorAll('i[data-icon]').forEach(el => { el.outerHTML = iconSvg(el.dataset.icon, +el.dataset.size || 16); });
 
   const state = {
-    skills: [], currentId: null, spec: null, autoSpec: null, G: null, player: null, svg: null,
+    skills: [], currentId: null, spec: null, autoSpec: null, fullSpec: null, hier: null, view: { phase: null }, G: null, player: null, svg: null,
     zoom: 'fit', cols: +(params.get('cols') || store.get('cols', 4)), theme: params.get('theme') || store.get('theme3', 'light'),
     speed: 1, playing: true, selected: null, collapsed: store.get('collapsed', {}), overrides: store.get('overrides', {}),
     query: '', server: false, panel: store.get('panel', true),
     web: { q: '', items: null, busy: false, error: '' }, official: [], officialBusy: false,
     lang: params.get('lang') || store.get('lang2', 'zh'),
     motion: RECORD ? (params.get('motion') === 'flat' || params.get('motion') === 'minimal' ? 'flat' : '3d') : motionSetting(store.get('motion', '3d')), panning: false,
-    translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, missing: 0, busy: false, error: '' }, showOrig: false,
+    translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, total: 0, missing: 0, busy: false, error: '' }, showOrig: false,
   };
   SV.i18n.set(state.lang);
-
-  const ZH_GROUP_ARG = {
-    'Claude Code': '克劳德代码',
-    'Codex': '代码助手',
-    '~/.agents': '全局智能体',
-    'GitHub Copilot': '代码副驾',
-    'Antigravity': '反重力助手',
-    'Grok': '格罗克助手',
-    'mimocode': '米莫代码',
-    'claude-science': '科研智能体',
-    'Gemini CLI': '双子星终端',
-    'OpenCode': '开源代码助手',
-    'Kiro': '奇罗智能体',
-    'OpenClaw': '开源利爪助手',
-    'Qwen Code': '通义千问代码',
-    'Lingma': '通义灵码',
-    'Vibe': '氛围编程助手',
-    'Cursor': '游标编辑器',
-    'Windsurf': '乘风编辑器',
-    'Cline': '克莱恩助手',
-    'Roo Code': '袋鼠代码助手',
-    'Trae': '萃伊编辑器',
-    'Continue': '续写助手',
-    'Amp': '安普助手',
-    'Aider': '艾德助手',
-    'Zed': '极速编辑器',
-    'Goose': '飞鹅智能体',
-    '26年英伟达黑客松比赛': '26年英伟达黑客松比赛',
-    'AI_video': '智能视频项目',
-    'MetalMax': '重装机兵项目',
-    'MetalMax_backup': '重装机兵备份',
-    'nexa': '奈克萨项目',
-    'speak_plainly': '直白表达项目',
-    'xiaohongshu': '小红书项目',
-    '个人的bot': '个人机器人',
-    '这辈子': '这辈子项目',
-    'anthropics/skills': '官方技能集（安索匹克）',
-    'openai/skills': '官方技能集（开放智能）',
-    'anthropics/claude-plugins-official': '官方插件集',
-  };
-  const zhGroupArg = a => (state.lang === 'zh' && a ? (ZH_GROUP_ARG[a] || a) : (a || ''));
 
   /* 把页面上带 data-t 的静态文字换成当前语言 */
   function applyLang() {
@@ -85,12 +44,14 @@
   function setLang(lang) {
     state.lang = SV.i18n.set(lang);
     store.set('lang2', state.lang);
+    trAbort('list');
+    trAbort('detail');
     applyLang();
     renderList();
     if (state.currentId) select(state.currentId, true); else renderHeader();
   }
-  const groupName = s => s.groupKey ? t('group.' + s.groupKey, zhGroupArg(s.groupArg)) : (s.group || t('group.other'));
-  const whereName = w => w.key ? t('group.' + w.key, zhGroupArg(w.arg)) : (w.label || t('group.other'));
+  const groupName = s => s.groupKey ? t('group.' + s.groupKey, s.groupArg || '') : (s.group || t('group.other'));
+  const whereName = w => w.key ? t('group.' + w.key, w.arg || '') : (w.label || t('group.other'));
   /* 量大的分组（官方库、插件市场、软件自带的）默认折叠 */
   const FOLDED_KINDS = ['catalog', 'official'];
 
@@ -208,189 +169,138 @@
   }
 
   /* —— 列表 —— */
+  /* 分组的稳定标识：不随界面语言变，折叠状态按它保存（旧版本按本地化名字存，读取时兜底） */
+  const groupId = s => s.groupKey ? s.groupKey + (s.groupArg ? ':' + s.groupArg : '') : 'g:' + (s.group || 'other');
   function groupsOf(list) {
     const order = [];
-    const map = {};
+    const map = new Map();
     for (const s of list) {
-      const g = groupName(s);
-      if (!map[g]) { map[g] = []; order.push(g); }
-      map[g].push(s);
+      const id = groupId(s);
+      if (!map.has(id)) { map.set(id, { id, name: groupName(s), items: [] }); order.push(id); }
+      map.get(id).items.push(s);
     }
-    return order.map(g => ({ name: g, items: map[g] }));
+    return order.map(id => map.get(id));
   }
 
+  /* 常用技能的中文名：只写用途，产品名保持原文；真实名称会同时显示在顶栏和详情的「技能名称」里 */
   const ZH_SKILL_NAMES = {
     'skilllens': '技能图解',
     'review-loop': '代码审查循环',
     'faceless-explainer': '无出镜讲解视频',
     'general-video': '通用视频制作',
-    'hyperframes-animation': '超帧动画设计',
-    'hyperframes-audio': '超帧音频混音',
-    'hyperframes-cli': '超帧命令行流程',
-    'hyperframes-core': '超帧核心合成',
-    'hyperframes-creative': '超帧创意指导',
-    'hyperframes-keyframes': '超帧关键帧运镜',
-    'hyperframes-registry': '超帧组件仓库',
-    'hyperframes-studio': '超帧工作室协作',
-    'hyperframes': '超帧视频总入口',
+    'hyperframes-animation': 'HyperFrames 动画设计',
+    'hyperframes-audio': 'HyperFrames 音频混音',
+    'hyperframes-cli': 'HyperFrames 命令行流程',
+    'hyperframes-core': 'HyperFrames 核心合成',
+    'hyperframes-creative': 'HyperFrames 创意指导',
+    'hyperframes-keyframes': 'HyperFrames 关键帧运镜',
+    'hyperframes-registry': 'HyperFrames 组件仓库',
+    'hyperframes-studio': 'HyperFrames 工作室协作',
+    'hyperframes': 'HyperFrames 视频总入口',
     'media-use': '媒体素材调用',
     'product-launch-video': '产品发布视频',
     'built-in-browser': '内置浏览器控制',
-    'chrome-browser': '谷歌浏览器协同',
+    'chrome-browser': 'Chrome 浏览器协同',
     'computer-use': '电脑桌面操控',
     'deep-research': '深度研究工作流',
     'docs': '在线协作文档',
-    'docx': '文字文档处理',
+    'docx': 'Word 文档处理',
     'import-memory': '历史记忆导入',
     'morning': '晨间简报生成',
-    'pdf': '便携文档处理',
-    'pptx': '演示文稿制作',
+    'pdf': 'PDF 文档处理',
+    'pptx': 'PowerPoint 演示文稿制作',
     'skill-creator': '技能构建助手',
-    'xlsx': '电子表格处理',
+    'xlsx': 'Excel 电子表格处理',
     'chibi-character': 'Q版角色设计',
     'concept-sheet': '角色概念设定图',
-    'codex-delegate': '代码助手委派',
-    'dgx-comfyui': '算力节点生图工作流',
+    'codex-delegate': 'Codex 任务委派',
+    'dgx-comfyui': 'DGX ComfyUI 生图工作流',
     'imagegen': '智能图像生成',
-    'openai-docs': '开放智能文档查询',
+    'openai-docs': 'OpenAI 文档查询',
     'review-agent': '代码审查代理',
     'skill-installer': '技能安装工具',
     'apply-gpt-5p6-guidance': '高阶提示词规范',
     'codex-output-polish': '输出内容润色',
     'create-plan': '实施方案规划',
     'design-taste-frontend': '前端审美设计',
-    'easyeda-api': '立创电路板接口',
-    'figma-implement-design': '设计稿转前端代码',
+    'easyeda-api': 'EasyEDA 电路板接口',
+    'figma-implement-design': 'Figma 设计稿转前端代码',
     'frontend-skill': '前端工程开发',
     'i-have-adhd': '专注力分步辅助',
-    'img2threejs': '图片转三维场景',
+    'img2threejs': '图片转 Three.js 三维场景',
     'nostalgic-emotion-story': '怀旧情感故事生成',
     'project-weekly-report': '项目周报生成',
-    'remotion-best-practices': '编程视频最佳实践',
-    'remotion-captions': '编程视频字幕生成',
-    'remotion-create': '编程视频工程创建',
-    'remotion-docs': '编程视频文档查阅',
-    'remotion-markup': '编程视频画面排版',
-    'remotion-multimedia': '编程视频多媒体合成',
-    'remotion-render': '编程视频渲染导出',
-    'remotion-studio': '编程视频预览工作台',
+    'remotion-best-practices': 'Remotion 最佳实践',
+    'remotion-captions': 'Remotion 字幕生成',
+    'remotion-create': 'Remotion 工程创建',
+    'remotion-docs': 'Remotion 文档查阅',
+    'remotion-markup': 'Remotion 画面排版',
+    'remotion-multimedia': 'Remotion 多媒体合成',
+    'remotion-render': 'Remotion 渲染导出',
+    'remotion-studio': 'Remotion 预览工作台',
     'setup-api-key': '接口密钥配置',
     'speech-to-text': '语音转文字',
     'text-to-speech': '文字转语音',
     'wechat-sticker': '微信表情包制作',
     'control-in-app-browser': '应用内浏览器控制',
-    'control-chrome': '浏览器自动化控制',
+    'control-chrome': 'Chrome 浏览器自动化控制',
     'visualize': '数据图表可视化',
-    'google-docs': '云端文字文档',
-    'google-drive-comments': '云盘评论管理',
-    'google-drive': '云端硬盘管理',
-    'google-sheets': '云端电子表格',
-    'google-slides': '云端演示文稿',
+    'google-docs': 'Google 文档',
+    'google-drive-comments': 'Google 云端硬盘评论管理',
+    'google-drive': 'Google 云端硬盘管理',
+    'google-sheets': 'Google 表格',
+    'google-slides': 'Google 幻灯片',
   };
-  const ZH_SLUG_WORDS = {
-    artifact: '成品', template: '模板', analytics: '分析', dashboard: '看板', annual: '年度', impact: '影响', report: '报告',
-    brand: '品牌', guidelines: '规范', business: '业务', review: '评审', calder: '架构', architecture: '架构',
-    creative: '创意', campaign: '活动', brief: '简报', design: '设计', experiment: '实验', analysis: '分析',
-    financial: '财务', budget: '预算', growth: '增长', strategy: '策略', investment: '投资', committee: '委员会',
-    memo: '备忘录', legal: '法务', memorandum: '备忘录', market: '市场', trends: '趋势', minimal: '极简',
-    letterhead: '信头', next: '新一代', generation: '世代', os: '系统', operating: '运营', calendar: '日历',
-    photography: '摄影', portfolio: '作品集', product: '产品', pitch: '路演', project: '项目', kickoff: '启动会',
-    tracker: '追踪', sales: '销售', pipeline: '管线', state: '前沿', of: '', art: '技术', system: '系统',
-    three: '三表', statement: '财务', forecast: '预测', weekly: '周度', maintain: '维护', space: '空间',
-    manage: '管理', schedules: '日程', organize: '整理', write: '撰写', page: '页面', plugin: '插件',
-    management: '管理', sites: '站点', create: '创建', pet: '桌宠', pets: '桌宠', update: '更新',
-    gh: '代码库', address: '处理', comments: '评论', fix: '修复', ci: '持续集成', github: '代码托管',
-    documents: '文档', presentations: '演示文稿', excel: '表格', live: '实时', control: '控制',
-    spreadsheets: '电子表格', creator: '生成器', agent: '智能体', reach: '触达', reverse: '逆向',
-    engineer: '工程', anything: '万物', compute: '算力', env: '环境', setup: '配置', customize: '定制',
-    figure: '图表', composer: '排版', style: '样式', literature: '文献', managed: '托管', model: '模型',
-    endpoints: '端点', endpoint: '端点', paper: '论文', narrative: '叙事', explore: '探索', self: '自我',
-    knowledge: '知识', remote: '远程', modal: '云容器', ssh: '远程连接', tools: '工具', awareness: '感知',
-    using: '调用', amap: '高德地图', threejs: '三维渲染', event: '事件', landmark: '地标', refinement: '精修',
-    life: '生活', butler: '管家', liquid: '流光', glass: '玻璃质感', map: '地图', scene: '场景',
-    styling: '样式', memory: '记忆', film: '胶片', identity: '身份', storytelling: '叙事', photo: '照片',
-    card: '卡片', context: '语境', cull: '筛选', spacetime: '时空', modeling: '建模', stepfun: '阶跃星辰',
-    api: '接口', story: '故事', understanding: '理解', high: '高', quality: '品质', explainer: '讲解',
-    video: '视频', game: '游戏', '3d': '三维', assets: '资产', native: '原生', optimization: '优化',
-    unreal: '虚幻引擎', dialogue: '对话', changelog: '更新日志', tool: '工具', flutter: '跨端界面',
-    ui: '界面', director: '导演', evidence: '循证', article: '文章', codex: '代码', image: '图像',
-    qc: '质检', skills: '技能集', workflow: '工作流', translate: '翻译', docs: '文档', add: '添加',
-    release: '发布', highlights: '亮点', retrospective: '复盘', team: '团队', browser: '浏览器',
-    ask: '提问', code: '代码', codebase: '代码库', diagnosing: '诊断', bugs: '缺陷', domain: '领域',
-    frontend: '前端', grill: '深度追问', me: '我', with: '结合', grilling: '深度追问', handoff: '交接',
-    implement: '实现', improve: '优化', pr: '合并请求', ai: '智能', loop: '循环', prototype: '原型',
-    research: '研究', resolving: '解决', merge: '合并', conflicts: '冲突', tdd: '测试驱动开发',
-    teach: '教学', to: '转为', questionnaire: '问卷', spec: '规范', tickets: '工单', triage: '分诊',
-    vercel: '云端', react: '前端框架', best: '最佳', practices: '实践', wait: '等等', what: '核对',
-    wayfinder: '路径导航', web: '网页', wizard: '向导', writing: '写作', for: '面向', agents: '智能体',
-    joy: '悦享', phone: '手机', diagnostics: '诊断',
-  };
+  /* 只认上面这张表（精确匹配），不再按单词拼凑中文名 */
   function skillDisplayName(s) {
     if (!s) return '';
     const raw = String(s.name || '');
     if (state.lang !== 'zh' || !state.translate) return raw;
-    if (ZH_SKILL_NAMES[raw]) return ZH_SKILL_NAMES[raw];
-    const low = raw.toLowerCase();
-    if (ZH_SKILL_NAMES[low]) return ZH_SKILL_NAMES[low];
-    if (/[\u3400-\u9fff]/.test(raw)) return raw;
-    const parts = low.split(/[-_\s]+/).filter(Boolean);
-    const mapped = parts.map(p => ZH_SLUG_WORDS[p]).filter(x => x !== undefined);
-    if (mapped.length === parts.length && mapped.join('')) return mapped.join('');
+    for (const k of [raw, raw.toLowerCase()]) if (Object.prototype.hasOwnProperty.call(ZH_SKILL_NAMES, k)) return ZH_SKILL_NAMES[k];
     return raw;
   }
+  /* 译文里的少量措辞统一。只用在译文上（TR.cache 命中的），原文不动；
+     行内代码、含 / \ . _ : ~ @ # 的片段（路径、文件名、命令、网址）一律跳过 */
+  const ZH_POLISH = [
+    [/(?<![\w/.-])skillflow(?![\w/.-])/gi, '预设流程'],
+  ];
+  const POLISH_SKIP = /[\\/._:~@#]/; // 含这些字符的片段（路径、文件名、命令、网址）不动
   function zhPolishText(str) {
     if (typeof str !== 'string' || state.lang !== 'zh' || !state.translate) return str;
-    return str
-      .replace(/SkillLens example\s*·\s*icons Lucide \(ISC\)/gi, '技能图解示例 · 开源矢量图标库')
-      .replace(/SkillLens/g, '技能图解')
-      .replace(/SKILL\.md/g, '技能文档')
-      .replace(/skillflow/gi, '预设流程')
-      .replace(/HyperFrames/g, '超帧框架')
-      .replace(/BRIEF\.md/g, '简报文档')
-      .replace(/STORYBOARD\.md/g, '分镜文档')
-      .replace(/SCRIPT\.md/g, '旁白脚本')
-      .replace(/frame\.md/g, '画面规范')
-      .replace(/\/product-launch-video/g, '「产品发布视频」')
-      .replace(/\/hyperframes/g, '「超帧视频总入口」')
-      .replace(/Claude in Chrome/g, '谷歌浏览器协同')
-      .replace(/Claude Code/g, '克劳德代码')
-      .replace(/Claude/g, '克劳德')
-      .replace(/HTML\s*\/\s*SVG\s*\/\s*PNG/g, '网页 · 矢量图 · 高清图')
-      .replace(/\bHTML\b/g, '网页')
-      .replace(/\bMP4\b|\bmp4\b/g, '视频')
-      .replace(/\bPR\b/g, '合并请求')
-      .replace(/\bAI\b/g, '智能')
-      .replace(/\bLint\b/g, '代码检查')
-      .replace(/\bCLI\b/g, '命令行')
-      .replace(/\bURL\b/g, '网址')
-      .replace(/\bPDF\b/g, '便携文档')
-      .replace(/\bPPTX\b|\b\.pptx\b|\b\.potx\b/g, '演示文稿')
-      .replace(/\bDOCX\b|\bWord\b/g, '文字文档')
-      .replace(/\binit\b/g, '初始化')
-      .replace(/\badd\b/g, '添加组件');
+    return str.split(/(`[^`]*`|\s+)/).map(part => {
+      if (!part || part[0] === '`' || /^\s+$/.test(part)) return part;
+      if (POLISH_SKIP.test(part.replace(/[.,;:!?)\]}'"”’。，；：！？）]+$/, ''))) return part;
+      return ZH_POLISH.reduce((acc, [re, to]) => acc.replace(re, to), part);
+    }).join('');
   }
 
-  /* 列表里的一行描述也跟随界面语言（服务模式下自动翻译并缓存） */
-  let descAsked = false;
+  /* 列表里的一行描述也跟随界面语言（服务模式下自动翻译并缓存）。只有译文才做措辞统一，原文不动 */
   function listDesc(s) {
     const d = s.description || s.path || '';
-    if (!state.translate) return d;
-    if (!needsTr(d, state.lang)) return state.lang === 'zh' ? zhPolishText(d) : d;
+    if (!state.translate || !needsTr(d, state.lang)) return d;
     const hit = TR.cache[trKey(state.lang, d)];
-    const out = hit != null ? hit : d;
-    return state.lang === 'zh' ? zhPolishText(out) : out;
+    if (hit == null) return d;
+    return state.lang === 'zh' ? zhPolishText(hit) : hit;
   }
-  /* 只翻译看得见的（展开的分组、搜索结果），上千条描述不会一次全送去翻译 */
+  /* 只翻译看得见的（展开的分组、搜索结果），上千条描述不会一次全送去翻译。
+     防抖一下；看得见的内容变了就取消上一批、按新的顺序重来（list 通道只留一个请求） */
+  let descTimer = 0;
   function askDescTranslations(items) {
-    if (descAsked || !state.translate) return;
-    const lang = state.lang;
-    const miss = items.map(s => s.description).filter(d => d && needsTr(d, lang) && TR.cache[trKey(lang, d)] == null);
-    if (!miss.length) return;
-    descAsked = true;
-    requestTr(miss.slice(0, 200), false, () => { if (state.lang === lang) { renderList(); renderDetail(); } }).finally(() => { descAsked = false; });
+    clearTimeout(descTimer);
+    if (!state.translate) return;
+    descTimer = setTimeout(() => {
+      const lang = state.lang;
+      const miss = [...new Set(items.map(s => s.description).filter(d => d && needsTr(d, lang) && TR.cache[trKey(lang, d)] == null))].slice(0, 200);
+      if (miss.length) requestTr(miss, { channel: 'list', done: () => { if (state.lang === lang) { renderList(); renderDetail(); } } });
+    }, 250);
   }
 
-  const isFolded = g => g.name in state.collapsed ? state.collapsed[g.name] : FOLDED_KINDS.includes(g.items[0].kind) || g.items[0].groupKey === 'agentBuiltin';
+  const isFolded = g => {
+    const has = k => Object.prototype.hasOwnProperty.call(state.collapsed, k);
+    if (has(g.id)) return state.collapsed[g.id];
+    if (has(g.name)) return state.collapsed[g.name];
+    return FOLDED_KINDS.includes(g.items[0].kind) || g.items[0].groupKey === 'agentBuiltin';
+  };
 
   function itemHtml(s) {
     const flow = /```\s*skillflow/.test(s.text || '');
@@ -416,7 +326,7 @@
     else html = groups.map(g => {
       const folded = isFolded(g);
       // 折叠的大分组不生成条目，上千个 skill 也不卡
-      return `<div class="group${folded && !q ? ' collapsed' : ''}" data-group="${esc(g.name)}" data-folded="${folded ? 1 : 0}">
+      return `<div class="group${folded && !q ? ' collapsed' : ''}" data-group="${esc(g.id)}" data-folded="${folded ? 1 : 0}">
         <button class="group-head">${iconSvg('chevron-down', 14)}<span>${esc(g.name)}</span><span class="count">${g.items.length}</span></button>
         <div class="items">${folded && !q ? '' : g.items.map(itemHtml).join('')}</div>
       </div>`;
@@ -516,6 +426,10 @@
     const all = sp => [sp.trigger].concat(...(sp.lanes || []).map(l => l.nodes)).filter(Boolean);
     all(from).forEach(n => { map[n.id] = n; });
     all(spec).forEach(n => { if (!n.detail && map[n.id]) n.detail = map[n.id].detail; });
+    (spec.lanes || []).forEach(lane => {
+      const original = from.lanes.find(l => l.id === lane.id);
+      if (!lane.source && original) lane.source = original.source;
+    });
     spec.frontMatter = from.frontMatter;
     spec.description = spec.description || from.description;
     spec.name = from.name || spec.name;
@@ -523,79 +437,142 @@
     return spec;
   }
 
+  const specCache = new Map();
   function buildSpec(s) {
-    const auto = SV.extract(s.text, { fallbackName: s.name });
-    state.autoSpec = auto;
+    // 同一来源只提取一次，展开阶段只换可见结构
+    let cached = specCache.get(s.id);
+    if (!cached || cached.text !== s.text) {
+      cached = { text: s.text, auto: SV.extract(s.text, { fallbackName: s.name, cap: false }) };
+      // 预设流程保留每条泳道的原始代码段
+      if (cached.auto.source === 'skillflow') {
+        const block = s.text.match(/(?:`{3,}|~{3,})skillflow[^\n]*\n([\s\S]*?)\n\s*(?:`{3,}|~{3,})/i);
+        if (block) {
+          let lane = null;
+          const sections = new Map();
+          block[1].split('\n').forEach(line => {
+            const match = line.match(/^lane\s+([^:]+):/);
+            if (match) { lane = match[1].trim(); sections.set(lane, []); }
+            else if (/^\S/.test(line) && line.trim()) lane = null;
+            if (lane) sections.get(lane).push(line);
+          });
+          cached.auto.lanes.forEach(l => {
+            if (!l.source && sections.has(l.id)) l.source = '```skillflow\n' + sections.get(l.id).join('\n').trimEnd() + '\n```';
+          });
+        }
+      }
+      specCache.set(s.id, cached);
+    }
+    const auto = state.autoSpec = cached.auto;
     state.specError = '';
+    let full = auto;
     const ov = state.overrides[s.id];
+    if (cached.hier && cached.override === ov && cached.lang === state.lang) {
+      state.fullSpec = cached.full;
+      state.hier = cached.hier;
+      state.specError = cached.error;
+      if (!state.hier.phases.some(p => p.id === state.view.phase && p.drill)) state.view.phase = null;
+      useView();
+      return;
+    }
     if (ov) {
       try {
         const sp = SV.dsl.parse(ov, { name: auto.name, description: auto.description });
         sp.source = 'edited';
-        state.rawSpec = mergeDetails(sp, auto);
-        useTranslation();
-        return;
+        full = mergeDetails(sp, auto);
       } catch (e) { state.specError = t('detail.parseWarn', e.message); }
     }
-    state.rawSpec = auto;
+    setFullSpec(full);
+    Object.assign(cached, { full, hier: state.hier, override: ov, lang: state.lang, error: state.specError });
+  }
+
+  function setFullSpec(full) {
+    state.fullSpec = full;
+    state.hier = SV.hier.build(full);
+    if (!state.hier.phases.some(p => p.id === state.view.phase && p.drill)) state.view.phase = null;
+    useView();
+  }
+
+  function useView() {
+    state.rawSpec = state.view.phase ? state.hier.detail(state.view.phase) : state.hier.overview;
+    if (!state.view.phase) {
+      state.rawSpec.source = state.fullSpec.source;
+      state.rawSpec.warnings = state.fullSpec.warnings;
+    }
     useTranslation();
   }
 
-  /* —— 翻译：图里的文字跟随界面语言（中文界面看英文 skill 时显示中文，反之亦然） —— */
-  const ZH_TERMS = {
-    'SkillLens': '技能图解',
-    'SKILL.md in · auto-extracted · animated flowchart out': '读取技能文档 · 自动解析结构 · 生成3D动态流程图',
-    'Open SkillLens': '启动技能图解',
-    'folders, .md files': '文件夹、文档文件',
-    'skillflow block?': '含预设流程块？',
-    'Tweak in Structure': '在结构面板微调',
-    'HTML / SVG / PNG': '网页 · 矢量图 · 高清图',
-    'record an mp4': '录制高清演示视频',
-    'When': '触发时机',
-    'Trigger': '触发条件',
-    'import': '导入阶段',
-    'extract': '解析阶段',
-    'export': '导出阶段',
-    'start.bat': '启动脚本',
-    'drop': '拖放粘贴',
-    'skillflow?': '预设流程？',
-    'auto': '自动提炼',
-    'review': '核对审查',
-    'edit': '编辑微调',
-    'render': '渲染画布',
-    'PR Review Loop': '代码合并审查循环',
-    'Checks run first · AI reviews the diff · a human makes the call': '先跑自动检查 · 智能审查差异 · 人工最终拍板',
-    'checks · AI review · human gate': '自动检查 · 智能审查 · 人工把关',
-    'pull_request': '合并请求',
-    'CI': '自动构建',
-    'ci': '构建测试',
-    'checks?': '通过检查？',
-    'AI review': '智能代码审查',
-    'AI': '智能代理',
-    'diff': '代码差异',
-    'risk': '风险评估',
-    'you': '人工把关',
-    'panel': '审查面板',
-    'approve?': '是否批准？',
-    'merge': '合并发布',
-    'Lint and test': '代码检查与测试',
-    'one screen per PR': '每个合并请求一屏总览',
-    'Reviewer asks for changes → back to the AI pass': '审查者要求修改 → 返回智能审查',
-    'next PR': '下一单请求',
-    'Faceless Explainer to HyperFrames': '无出镜讲解视频制作流程',
-    'faceless-explainer': '无出镜讲解视频',
-    'Audio': '音频与配音合成',
-    'brief-contract.md': '简报契约规范',
-    'story-spine.md': '故事主线规范',
-    'frame-presets/': '画面预设目录',
-    'design-spec.md': '视觉设计规范',
-    'story-design.md': '故事编排指南',
-    'blueprints-index.md': '镜头蓝图索引',
-    'storyboard-format.md': '分镜脚本格式',
-    'script-format.md · tts.md · visual-design.md · motion-language.md · cut-catalog.md · rules-index.md + rules/ · frame-worker-core.md · frame-worker.md · subagent-dispatch.md': '旁白格式 · 语音合成 · 视觉设计 · 动效语言 · 转场目录 · 动效规则集 · 画面核心 · 画面子代理 · 子代理调度',
-    'SkillLens example · icons Lucide (ISC)': '技能图解示例 · 开源矢量图标库',
-    'skills / review-loop / SKILL.md': '技能库 / 代码审查循环 / 技能文档',
+  const hashView = () => {
+    const hash = new URLSearchParams(location.hash.slice(1));
+    return { skill: hash.get('skill'), phase: hash.get('node') || null };
   };
+  // keep：同级阶段切换时就地替换历史记录，但保留「从总览钻进来」的标记，返回键仍回到总览
+  function writeView(push, keep) {
+    if (RECORD) return;
+    const hash = '#skill=' + encodeURIComponent(state.currentId) + (state.view.phase ? '&node=' + encodeURIComponent(state.view.phase) : '');
+    const drill = !!push || !!(keep && history.state && history.state.drill && history.state.skill === state.currentId);
+    history[push ? 'pushState' : 'replaceState']({ skill: state.currentId, phase: state.view.phase, drill }, '', hash);
+  }
+  function openPhase(phase, historyMode = 'push') {
+    if (!state.hier) return;
+    if (!state.hier.phases.some(p => p.id === phase && p.drill)) phase = null;
+    if (state.view.phase === phase) return;
+    clearReads();
+    trAbort('detail');
+    state.selected = null;
+    state.showOrig = false;
+    state.view.phase = phase;
+    state.zoom = 'fit';
+    state.panning = false;
+    useView();
+    if (historyMode !== 'none') writeView(historyMode === 'push', historyMode === 'sibling');
+    draw();
+    // 换层时画面淡入；纯 CSS 动画，只在交互时加，录制与导出里没有
+    if (!RECORD && state.motion !== 'minimal') {
+      const cam = $('#canvas .sv-cam');
+      if (cam) cam.classList.add('sv-enter');
+    }
+    ensureFonts(state.spec);
+    $('#stage').scrollTo(0, 0);
+    renderHeader();
+    renderDetail();
+  }
+  function overview() {
+    if (state.view.phase && history.state && history.state.drill && history.state.skill === state.currentId) history.back();
+    else openPhase(null, 'replace');
+  }
+  function restoreView() {
+    const want = hashView();
+    if (want.skill && want.skill !== state.currentId) select(want.skill, false, want.phase);
+    else openPhase(want.phase, 'none');
+  }
+  function activateNode(id) {
+    const hit = nodeSpec(id);
+    if (!state.view.phase && hit && hit.n.drill) openPhase(hit.n.drill);
+    else selectNode(id);
+  }
+  function phaseText(text) {
+    return state.translate ? TR.cache[trKey(state.lang, text)] || text : text;
+  }
+  function phaseBadge(phase) {
+    const node = state.hier.overview.lanes.flatMap(l => l.nodes).find(n => n.id === phase.id);
+    return node && node.tag || phase.badge;
+  }
+
+  /* —— 翻译：图里的文字跟随界面语言（中文界面看英文 skill 时显示中文，反之亦然） —— */
+  /* 精确匹配，对所有技能生效，所以只留通用的单词，译法是直译；技能专属的整句、产品名一律交给翻译服务 / 已有译文 */
+  const ZH_TERMS = {
+    'When': '何时',
+    'Trigger': '触发条件',
+    'extract': '提取',
+    'export': '导出',
+    'edit': '编辑',
+    'render': '渲染',
+    'diff': '差异',
+    'merge': '合并',
+    'risk': '风险',
+    'auto': '自动',
+  };
+  const isTerm = s => Object.prototype.hasOwnProperty.call(ZH_TERMS, s);
   function buildTrCache() {
     const base = Object.assign({}, window.SV_TRANS || {});
     for (const [k, v] of Object.entries(base)) {
@@ -610,63 +587,69 @@
     for (const [k, v] of Object.entries(ZH_TERMS)) base['zh\u0001' + k] = v;
     return base;
   }
-  const TR = { cache: buildTrCache(), backend: undefined, inflight: new Set() };
+  /* chan：翻译「通道」（graph 图上文字 / list 列表描述 / detail 详情原文），每个通道同一时刻只留一个请求；
+     failedAt：详情原文翻不出来的时间，避免每次重绘都重发 */
+  const TR = { cache: buildTrCache(), backend: undefined, inflight: new Set(), chan: {}, failedAt: new Map() };
   const trKey = (lang, s) => lang + '\u0001' + s;
   function needsTr(s, lang) {
     if (typeof s !== 'string') return false;
     const x = s.trim();
     if (!x || /^(yes|no)$/i.test(x)) return false;
     if (lang === 'zh') {
-      if (ZH_TERMS[x]) return true;
+      if (isTerm(x)) return true;
       if (!/[A-Za-z]{2,}/.test(x) || SV.text.cjkRatio(x) > 0.3) return false;
       if (!/\s/.test(x) && /[./\\_:@<>{}=#\d]/.test(x)) return false; // 文件名、路径、命令
       return true;
     }
     return /[\u3400-\u9fff]/.test(x);
   }
-  /* 逐个处理图上会显示的文字；fn 返回新文字或 undefined（不改） */
+  /* 逐个处理图上会显示的文字；fn(文字, 优先级) 返回新文字或 undefined（不改）。
+     优先级决定先翻谁（越小越先）：0 标题/主角/副标题 · 1 泳道标题 · 2 节点标题 · 3 标签 · 4 其余（说明、注释、连线文字、出口、页脚） */
   function eachText(spec, fn) {
-    const one = v => { const r = fn(v); return r === undefined ? v : r; };
-    const field = (o, k) => { if (o && typeof o[k] === 'string') o[k] = one(o[k]); };
-    const lines = n => { if (Array.isArray(n.lines)) n.lines = n.lines.map(one); else field(n, 'lines'); };
-    field(spec, 'title'); field(spec, 'subtitle'); field(spec, 'window'); field(spec, 'footer');
-    if (spec.hero) { field(spec.hero, 'title'); field(spec.hero, 'sub'); }
-    if (spec.trigger) { field(spec.trigger, 'title'); field(spec.trigger, 'tag'); lines(spec.trigger); }
+    const one = (v, r) => { const x = fn(v, r); return x === undefined ? v : x; };
+    const field = (o, k, r) => { if (o && typeof o[k] === 'string') o[k] = one(o[k], r); };
+    const lines = n => { if (Array.isArray(n.lines)) n.lines = n.lines.map(v => one(v, 4)); else field(n, 'lines', 4); };
+    field(spec, 'title', 0); field(spec, 'subtitle', 0); field(spec, 'window', 4); field(spec, 'footer', 4);
+    if (spec.hero) { field(spec.hero, 'title', 0); field(spec.hero, 'sub', 0); }
+    if (spec.trigger) { field(spec.trigger, 'title', 2); field(spec.trigger, 'tag', 3); lines(spec.trigger); }
     for (const l of spec.lanes || []) {
-      field(l, 'title'); field(l, 'tag');
-      (l.nodes || []).forEach(n => { field(n, 'title'); field(n, 'tag'); lines(n); });
-      if (l.notes) l.notes = l.notes.map(one);
+      field(l, 'title', 1); field(l, 'tag', 3);
+      (l.nodes || []).forEach(n => { field(n, 'title', 2); field(n, 'tag', 3); lines(n); });
+      if (l.notes) l.notes = l.notes.map(v => one(v, 4));
     }
-    (spec.edges || []).forEach(e => field(e, 'label'));
-    (spec.stubs || []).forEach(x => { field(x, 'text'); field(x, 'label'); });
+    (spec.edges || []).forEach(e => field(e, 'label', 4));
+    (spec.stubs || []).forEach(x => { field(x, 'text', 4); field(x, 'label', 4); });
+  }
+  /* 用缓存里已有的译文生成要显示的图：返回 { spec, any, total（要翻译的字数）, missing（还没译出来的，按显示优先级排好） } */
+  function translateSpec(raw, lang) {
+    const spec = JSON.parse(JSON.stringify(raw));
+    const rank = new Map();
+    const seen = new Set();
+    let any = false;
+    eachText(spec, (s, r) => {
+      if (lang === 'zh' && state.translate && isTerm(s)) { any = true; return ZH_TERMS[s]; }
+      if (!needsTr(s, lang)) return undefined;
+      any = true;
+      if (!state.translate) return undefined;
+      seen.add(s);
+      const hit = TR.cache[trKey(lang, s)];
+      if (hit != null) return lang === 'zh' ? zhPolishText(hit) : hit;
+      if (!rank.has(s) || r < rank.get(s)) rank.set(s, r);
+      return undefined;
+    });
+    const missing = [...rank.keys()].sort((a, b) => rank.get(a) - rank.get(b));
+    return { spec, any, total: seen.size, missing };
   }
   function useTranslation(isExplicit = false) {
     const raw = state.rawSpec;
     if (!raw) return;
     const lang = state.lang;
-    const spec = JSON.parse(JSON.stringify(raw));
-    const missing = new Set();
-    let any = false;
-    eachText(spec, s => {
-      if (lang === 'zh' && state.translate && ZH_TERMS[s]) { any = true; return ZH_TERMS[s]; }
-      if (!needsTr(s, lang)) return lang === 'zh' && state.translate ? zhPolishText(s) : undefined;
-      any = true;
-      if (!state.translate) return undefined;
-      const hit = TR.cache[trKey(lang, s)];
-      if (hit != null) return lang === 'zh' ? zhPolishText(hit) : hit;
-      missing.add(s);
-      return lang === 'zh' ? zhPolishText(s) : undefined;
-    });
-    state.spec = spec;
-    state.trInfo.any = any;
-    state.trInfo.missing = missing.size;
-    if (missing.size) requestTr([...missing], false, () => {
-      if (state.rawSpec !== raw || state.lang !== lang) return;
-      useTranslation(false);
-      draw(true);
-      renderHeader();
-      renderDetail();
-    }, isExplicit);
+    trAbort('graph'); // 换了技能 / 语言 / 图：旧的批次不再发
+    redrawCancel();
+    const r = translateSpec(raw, lang);
+    state.spec = r.spec;
+    Object.assign(state.trInfo, { any: r.any, total: r.total, missing: r.missing.length, busy: false, error: '' });
+    if (r.missing.length) graphPass(raw, lang, r.missing, isExplicit).catch(e => console.error(e));
     renderTrUi();
   }
   async function trBackend() {
@@ -675,30 +658,159 @@
     try { TR.backend = (await (await fetch('api/translate', { cache: 'no-store' })).json()).backend || null; } catch { TR.backend = null; }
     return TR.backend;
   }
-  async function requestTr(items, markdown, done, isExplicit = false) {
-    const lang = state.lang;
-    const todo = items.filter(s => !TR.inflight.has(trKey(lang, s)));
-    if (!todo.length) return;
-    if (!(await trBackend())) { renderTrUi(); return; }
-    if (todo.length > 500) todo.length = 500;
-    todo.forEach(s => TR.inflight.add(trKey(lang, s)));
-    state.trInfo.busy = true;
-    state.trInfo.error = '';
-    renderTrUi();
-    try {
-      const r = await fetch('api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: lang, items: todo, markdown: !!markdown }) });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || r.statusText);
-      for (const [k, v] of Object.entries(j.map || {})) TR.cache[trKey(lang, k)] = v;
-      done && done();
-    } catch (e) {
-      state.trInfo.error = e.message;
-      if (isExplicit) toast(t('tr.fail', e.message), 5000);
-    } finally {
-      todo.forEach(s => TR.inflight.delete(trKey(lang, s)));
-      state.trInfo.busy = TR.inflight.size > 0;
-      renderTrUi();
+
+  /* —— 请求通道：新请求取消同通道的旧请求（中止网络请求 + 丢掉还没发的批次 + 释放它占着的 key） —— */
+  function trOpen(name) {
+    trAbort(name);
+    return (TR.chan[name] = { name, ctrl: typeof AbortController === 'function' ? new AbortController() : null, keys: new Set(), cancelled: false, timer: 0, wake: null });
+  }
+  function trAbort(name) {
+    const c = TR.chan[name];
+    if (!c) return;
+    TR.chan[name] = null;
+    c.cancelled = true;
+    clearTimeout(c.timer);
+    c.keys.forEach(k => TR.inflight.delete(k));
+    c.keys.clear();
+    if (c.wake) c.wake();
+    if (c.ctrl) { try { c.ctrl.abort(); } catch { /* 已经结束 */ } }
+  }
+  function trClose(chan) {
+    if (TR.chan[chan.name] === chan) TR.chan[chan.name] = null;
+    chan.keys.forEach(k => TR.inflight.delete(k));
+    chan.keys.clear();
+  }
+  const trWait = (chan, ms) => new Promise(resolve => { chan.wake = resolve; chan.timer = setTimeout(resolve, ms); });
+  /* 一批最多 15 条、1500 字，按给定顺序切 */
+  function trChunks(items) {
+    const out = [];
+    let cur = [], chars = 0;
+    for (const s of items) {
+      if (cur.length && (cur.length >= 15 || chars + s.length > 1500)) { out.push(cur); cur = []; chars = 0; }
+      cur.push(s);
+      chars += s.length;
     }
+    if (cur.length) out.push(cur);
+    return out;
+  }
+  /* 按批依次发送；每批回来立刻写进缓存，再调 onBatch。返回 { left: 没译出来的原文, error }；中途被取消返回 null。
+     正文（markdown）一条一个请求，太长的由服务端自己切 */
+  async function trRun(chan, lang, items, markdown, onBatch) {
+    const batches = markdown ? items.map(s => [s]) : trChunks(items);
+    items.forEach(s => { const k = trKey(lang, s); chan.keys.add(k); TR.inflight.add(k); });
+    const left = [];
+    let error = '';
+    const release = list => list.forEach(s => { const k = trKey(lang, s); chan.keys.delete(k); TR.inflight.delete(k); });
+    for (let i = 0; i < batches.length; i++) {
+      if (chan.cancelled) return null;
+      const batch = batches[i];
+      try {
+        const r = await fetch('api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: chan.ctrl ? chan.ctrl.signal : undefined, body: JSON.stringify({ target: lang, items: batch, markdown: !!markdown }) });
+        const j = await r.json().catch(() => ({ ok: false, error: r.statusText || 'HTTP ' + r.status })); // 代理 / 网关返回的不是 JSON
+        if (chan.cancelled) return null;
+        if (!j.ok) throw new Error(j.error || r.statusText);
+        for (const [k, v] of Object.entries(j.map || {})) if (typeof v === 'string' && v.trim()) TR.cache[trKey(lang, k)] = v;
+      } catch (e) {
+        if (chan.cancelled || (e && e.name === 'AbortError')) return null; // 取消不算失败
+        error = (e && e.message) || String(e);
+        const rest = batches.slice(i).flat();
+        release(rest);
+        left.push(...rest);
+        break;
+      }
+      release(batch);
+      batch.forEach(s => { if (TR.cache[trKey(lang, s)] == null) left.push(s); }); // 服务端 failed 里的、或根本没返回的
+      try { onBatch && onBatch(); } catch (e) { console.error(e); }
+    }
+    return { left, error };
+  }
+  /* 列表描述 / 详情原文：一次性发出去（内部仍按批） */
+  async function requestTr(items, { channel, markdown = false, done } = {}) {
+    const lang = state.lang;
+    const fresh = [...new Set(items)].filter(s => TR.cache[trKey(lang, s)] == null);
+    if (!fresh.length || fresh.every(s => TR.inflight.has(trKey(lang, s)))) return; // 都已经在路上了
+    if (!(await trBackend())) { renderTrUi(); return; }
+    const chan = trOpen(channel);
+    const todo = fresh.filter(s => !TR.inflight.has(trKey(lang, s))).slice(0, 500);
+    const res = todo.length ? await trRun(chan, lang, todo, markdown, () => done && done()) : { left: [] };
+    trClose(chan);
+    if (res && res.left.length && markdown) {
+      res.left.forEach(s => TR.failedAt.set(trKey(lang, s), Date.now()));
+      try { done && done(); } catch (e) { console.error(e); }
+    }
+  }
+
+  /* —— 图上文字：按显示优先级分批翻译，每批回来就把图补上；失败的 3 秒后再试一次 —— */
+  async function graphPass(raw, lang, order, explicit) {
+    const info = state.trInfo;
+    if (explicit && TR.backend === null) TR.backend = undefined; // 手动重试时重新探测后端
+    const chan = trOpen('graph');
+    info.busy = !!state.server && TR.backend !== null; // 探测期间先按「会翻」显示进度，没有后端再改回来
+    renderTrUi();
+    const live = () => !chan.cancelled && state.rawSpec === raw && state.lang === lang;
+    const notCached = s => TR.cache[trKey(lang, s)] == null;
+    const progress = () => { if (live()) applyTr(raw, lang); };
+    if (!(await trBackend())) {
+      if (chan.cancelled) return;
+      trClose(chan);
+      info.busy = false;
+      renderTrUi();
+      if (explicit) toast(t('tr.noBackend'), 5000);
+      return;
+    }
+    if (!live()) return;
+    let res = await trRun(chan, lang, order.filter(notCached).slice(0, 500), false, progress);
+    if (!res) return;
+    info.error = res.error;
+    if (res.left.length && !explicit) {
+      await trWait(chan, 3000);
+      if (!live()) return;
+      const again = res.left.filter(notCached);
+      res = again.length ? await trRun(chan, lang, again, false, progress) : { left: [], error: '' };
+      if (!res) return;
+      info.error = res.error;
+    }
+    trClose(chan);
+    info.busy = false;
+    applyTr(raw, lang, true);
+    if (explicit && info.missing) toast(t('tr.fail', info.error || t('tr.someFail')), 5000);
+  }
+  /* 把缓存里已有的译文套进当前图（不发请求）：更新状态条，并（节流地）重画 */
+  function applyTr(raw, lang, final) {
+    if (state.rawSpec !== raw || state.lang !== lang) return;
+    const r = translateSpec(raw, lang);
+    state.spec = r.spec;
+    Object.assign(state.trInfo, { any: r.any, total: r.total, missing: r.missing.length });
+    renderTrUi();
+    redrawTr(final);
+  }
+  /* 重画 = 重建整张 SVG，贵：翻译中最多每 1200ms 一次，结束时一定补一次；录制时不重画；播放进度保持 */
+  let redrawAt = 0, redrawTimer = 0, redrawBusy = false, redrawAgain = false;
+  function redrawCancel() { clearTimeout(redrawTimer); redrawTimer = 0; }
+  async function redrawRun() {
+    redrawTimer = 0;
+    if (redrawBusy) { redrawAgain = true; return; }
+    redrawBusy = true;
+    try {
+      do {
+        redrawAgain = false;
+        const raw = state.rawSpec;
+        await ensureFonts(state.spec, 1500); // 新字形先加载好再排版，免得字体到了又重排一次
+        if (!state.spec || state.rawSpec !== raw) break;
+        redrawAt = Date.now();
+        draw(true);
+        renderHeader();
+        renderDetail();
+      } while (redrawAgain);
+    } finally { redrawBusy = false; }
+  }
+  const redrawGo = () => redrawRun().catch(e => console.error(e));
+  function redrawTr(final) {
+    if (RECORD || !state.spec) return;
+    if (final) { redrawCancel(); redrawGo(); return; }
+    if (redrawTimer) return; // 已经排了一次，它会取最新的图
+    const wait = redrawAt + 1200 - Date.now();
+    if (wait <= 0) redrawGo(); else redrawTimer = setTimeout(redrawGo, wait);
   }
   function renderTrUi() {
     const btn = $('#btnTrans'), chip = $('#trStatus');
@@ -706,29 +818,36 @@
     const info = state.trInfo;
     btn.hidden = !info.any;
     btn.setAttribute('aria-pressed', String(state.translate));
-    let text = '', tip = '';
+    let text = '', tip = '', retry = false;
     if (info.any && state.translate) {
-      if (info.busy) text = t('tr.busy');
-      else if (info.missing) { text = t('tr.partial'); tip = info.error || (TR.backend === null ? t('tr.noBackend') : ''); }
-      else text = t('tr.done');
+      if (info.busy) text = t('tr.progress', Math.max(0, info.total - info.missing), info.total);
+      else if (info.missing) {
+        text = t('tr.left', info.missing);
+        tip = (info.error || (TR.backend === null ? t('tr.noBackend') : t('tr.someFail'))) + ' · ' + t('tr.retry');
+        retry = true;
+      } else text = t('tr.done');
     }
     chip.textContent = text;
     chip.title = tip;
     chip.hidden = !text;
     chip.classList.toggle('busy', !!info.busy);
+    chip.classList.toggle('retry', retry);
   }
 
-  function select(id, keepSel) {
+  function select(id, keepSel, phase = null) {
     const s = findSkill(id);
     if (!s) return;
     clearReads();
+    trAbort('detail');
+    const same = state.currentId === id;
+    if (!keepSel || !same) { state.view.phase = phase; state.zoom = 'fit'; }
     state.currentId = id;
     if (!keepSel) { state.selected = null; state.showOrig = false; }
     if (!RECORD) {
       store.set('last', id);
-      history.replaceState(null, '', '#skill=' + encodeURIComponent(id));
     }
     try { buildSpec(s); } catch (e) { console.error(e); toast(t('toast.parseFail', e.message), 5000); return; }
+    writeView(false);
     draw();
     ensureFonts(state.spec);
     renderList();
@@ -774,7 +893,11 @@
     state.svg = canvas.querySelector('svg');
     state.player = SV.render.createPlayer(state.svg, G, { loop: !RECORD, reducedMotion: state.motion === 'minimal', camera: { el: canvas.querySelector('.sv-cam'), strength: cameraStrength() } });
     state.player.setSpeed(state.speed);
-    if (!state.playing || RECORD) state.player.pause();
+    if (!state.playing || RECORD) {
+      state.player.pause();
+      // 暂停时新画的图停在入场结束后半秒（卡片、主角区文字都已出现）；停在 0 秒整张图是透明的，要按播放才看得见
+      if (!RECORD && !t0) state.player.seek(state.player.intro + 0.5);
+    }
     if (t0) state.player.seek(t0);
     if (!RECORD && readPin) state.player.setPin(readPin);
     if (state.selected) markSelected(state.selected);
@@ -789,52 +912,50 @@
     version: '版本号',
     author: '作者',
   };
-  function zhPathText(p, s) {
-    if (!p || state.lang !== 'zh' || !state.translate) return p;
-    return String(p)
-      .replace(/UserData/g, '用户数据')
-      .replace(/\.claude/g, '克劳德配置')
-      .replace(/\bskills\b/gi, '技能库')
-      .replace(/\bexamples\b/gi, '示例库')
-      .replace(/SKILL\.md/gi, '技能文档')
-      .replace(s && s.name ? s.name : '\u0000', s ? skillDisplayName(s) : '');
-  }
-  const ZH_FILE_NAMES = {
-    'cut-catalog': '转场目录',
-    'motion-language': '动效语言',
-    'story-design': '故事编排指南',
-    'visual-design': '视觉设计规范',
-    'assemble-index': '索引组装',
-    'audio': '音频与配音合成',
-    'build-frame': '画面预设构建',
-    'captions': '字幕生成',
-    'frame-packets': '画面数据包',
-    'transitions': '转场注入与校验',
-    'frame-worker': '画面构建子代理',
-  };
-  function zhFileItem(f) {
-    if (!f || state.lang !== 'zh' || !state.translate) return f;
-    let out = String(f)
-      .replace(/^references\//, '参考资料 / ')
-      .replace(/^scripts\//, '脚本工具 / ')
-      .replace(/^sub-agents\//, '子代理 / ')
-      .replace(/^templates\//, '模板 / ')
-      .replace(/^assets\//, '素材 / ')
-      .replace(/\.test\.(mjs|js|ts)$/, '（测试脚本）')
-      .replace(/\.(mjs|js|ts|py|sh)$/, '（脚本）')
-      .replace(/\.md$/, '（文档）')
-      .replace(/\.json$/, '（配置）');
-    for (const [k, v] of Object.entries(ZH_FILE_NAMES)) out = out.replace(k, v);
-    return out;
-  }
-
+  /* 顶栏：标题 + 真实名称（slug）小字；悬停看完整路径。title 和真实名称差不多时不重复 */
+  const sameName = (a, b) => { const n = x => String(x || '').toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]+/g, ''); return n(a) === n(b); };
   function renderHeader() {
     const s = findSkill(state.currentId);
     const spec = state.spec;
     const dispName = s ? skillDisplayName(s) : '';
-    const subPath = s ? zhPathText(s.path || s.name, s) : '';
-    $('#current').innerHTML = s && spec ? `<b>${esc(spec.title || dispName)}</b><span>${esc(subPath)}</span>` : `<b>${t('current.none')}</b>`;
-    document.title = s ? `${dispName} · ${t('app.title')}` : t('app.title');
+    const cur = $('#current');
+    if (s && spec) {
+      const title = spec.title || dispName;
+      const slug = s.name && !sameName(s.name, title) ? String(s.name) : '';
+      const phase = state.hier && state.hier.phases.find(p => p.id === state.view.phase);
+      // 根节点与总览图上的标题一致（含译文），别显示 slug
+      const root = phase ? translateSpec({ title: state.hier.overview.title || '' }, state.lang).spec.title || dispName : '';
+      cur.innerHTML = phase
+        ? `<div class="breadcrumb"><button data-overview>${esc(root)}</button>${phase.laneTitle ? `<span>›</span><em>${esc(phaseText(phase.laneTitle))}</em>` : ''}<span>›</span><b>${esc(title)}</b><small class="badge">${esc(phaseBadge(phase))}</small></div>`
+        : `<b>${esc(title)}</b>${slug ? `<span>${esc(slug)}</span>` : ''}`;
+      cur.title = s.full || s.path || s.name || '';
+      cur.classList.toggle('has-sub', !!slug);
+    } else {
+      cur.innerHTML = `<b>${t('current.none')}</b>`;
+      cur.title = '';
+      cur.classList.remove('has-sub');
+    }
+    $('#btnOverview').hidden = !state.view.phase;
+    renderPager();
+    document.title = state.view.phase ? `${dispName} › ${spec.title} · ${t('app.title')}` : s && dispName && dispName !== t('app.title') ? `${dispName} · ${t('app.title')}` : t('app.title');
+  }
+
+  /* 阶段详情左上角的「上一阶段 · 3 / 6 · 下一阶段」：只在主流程里可展开的阶段之间切换 */
+  function renderPager() {
+    const box = $('#phasePager');
+    const list = state.hier ? state.hier.phases.filter(p => p.kind === 'flow' && p.drill) : [];
+    const at = list.findIndex(p => p.id === state.view.phase);
+    box.hidden = at < 0 || list.length < 2;
+    if (box.hidden) return;
+    const pos = $('#phasePos');
+    pos.textContent = `${at + 1} / ${list.length}`;
+    pos.setAttribute('aria-label', t('hier.pagerAria', at + 1, list.length));
+    [['#btnPhasePrev', list[at - 1]], ['#btnPhaseNext', list[at + 1]]].forEach(([sel, p]) => {
+      const b = $(sel);
+      b.disabled = !p;
+      b.dataset.go = p ? p.id : '';
+      b.title = p ? phaseText(p.title) : '';
+    });
   }
 
   /* —— 缩放与平移 —— */
@@ -853,7 +974,8 @@
     const present = document.body.classList.contains('present');
     const pad = (present ? 0 : 16) + 1;
     const z = Math.min((stage.clientWidth - pad) / state.G.W, (stage.clientHeight - pad) / state.G.H);
-    return Math.max(0.2, Math.min(present ? 2.5 : 1.5, z));
+    // 阶段详情的图通常很小，放到 1.5 倍字太大，放宽到 1.3 倍为止
+    return Math.max(0.2, Math.min(present ? 2.5 : state.view.phase ? 1.3 : 1.5, z));
   }
   function currentZoom() { return state.zoom === 'fit' ? fitZoom() : state.zoom; }
   function applyZoom() {
@@ -1200,8 +1322,9 @@
 
   const tcCache = Object.assign({}, window.SV_TESTCASES || {});
   const tcInflight = new Set();
+  const tcFailed = new Set(); // 本次会话里请求失败的技能（按 id）：重绘时不再重复 POST
   async function requestTestCase(s, key) {
-    if (!state.server || !s || tcInflight.has(key) || tcCache[key]) return;
+    if (!state.server || !s || tcInflight.has(key) || tcFailed.has(s.id) || tcCache[key]) return;
     tcInflight.add(key);
     try {
       const r = await fetch('api/testcase', {
@@ -1213,22 +1336,35 @@
       if (j && j.ok && j.tc && j.tc.input) {
         tcCache[key] = j.tc;
         if (state.currentId === s.id && !state.selected) renderDetail();
-      }
-    } catch { /* ignore when Ollama is offline */ }
+      } else tcFailed.add(s.id);
+    } catch { tcFailed.add(s.id); /* 本地模型没开时别每次重绘都重试 */ }
     finally { tcInflight.delete(key); }
   }
 
+  /* 没有人工写的、也没有模型生成的用例时的兜底。只有技能名里明确出现某一类的词（按词匹配，不是子串）才套该类模板，
+     猜不准（没有或不止一类）就用中性模板，不硬套一个不相干的类别。被截断（带「…」）的步骤名不能当原话放进引号。 */
+  const TC_KINDS = [
+    ['video', /\b(?:video|film|animat\w*|remotion|clips?|captions?|audio|voice|speech)\b|配音|视频|动画|分镜|字幕/],
+    ['review', /\b(?:review|bugs?|debug\w*|tests?|testing|tdd|qc|security|audit|diagnos\w*|fix|conflicts?)\b|审查|测试|缺陷|诊断|冲突|安全/],
+    ['doc', /\b(?:docs?|docx|pdf|pptx?|slides?|xlsx?|sheets?|excel|reports?|memo|article|write|writing|readme|changelog)\b|文档|报告|周报|文章|表格|演示/],
+    ['design', /\b(?:design|ui|frontend|figma|3d|images?|photos?|chibi|stickers?|style|glass|maps?|scene)\b|设计|前端|界面|照片|图像|三维|建模/],
+    ['deploy', /\b(?:deploy\w*|cloud|vercel|netlify|docker|mcp|server|cli|setup|config\w*|env)\b|插件|部署|配置|服务|接口/],
+  ];
+
   function buildSkillTestCase(s, sp) {
     const rawName = String((s && s.name) || (sp && sp.name) || '').toLowerCase();
-    const dispName = (sp && sp.title) || skillDisplayName(s) || rawName;
+    const whole = x => (x && !String(x).includes('…') ? String(x) : '');
+    const dispName = whole(sp && sp.title) || whole(skillDisplayName(s)) || rawName;
+    const allNodes = (sp && sp.lanes ? sp.lanes : []).filter(l => l.kind !== 'ref').flatMap(l => l.nodes || []);
+    const flowNodes = allNodes.filter(n => !n.more); // 「还有 N 项」是折叠占位，不是真步骤
+    const steps = flowNodes.map(n => whole(n.title)).filter(Boolean);
+    const first = steps[0] || '', last = steps.length > 1 ? steps[steps.length - 1] : '', mid = steps[Math.floor(steps.length / 2)] || '';
+    const decNode = flowNodes.find(n => n.type === 'decision' && whole(n.title));
     if (state.lang === 'en') {
-      const flowNodes = (sp && sp.lanes ? sp.lanes : []).filter(l => l.kind !== 'ref').flatMap(l => l.nodes || []);
-      const first = flowNodes[0] ? flowNodes[0].title : 'initial check';
-      const last = flowNodes.length > 1 ? flowNodes[flowNodes.length - 1].title : 'final output';
       return {
-        input: `Run "${dispName}" on a minimal sample input and walk through "${first}" to "${last}".`,
-        before: `Ad-hoc one-shot response that skips "${first}" validation and produces unstructured output.`,
-        after: `Follows the ${flowNodes.length || 3}-step workflow (${first} → … → ${last}) to deliver verified, structured results.`,
+        input: first && last ? `Run "${dispName}" on a minimal sample input and walk through "${first}" to "${last}".` : `Run "${dispName}" on a minimal sample input and walk through the whole flow.`,
+        before: first ? `Ad-hoc one-shot response that skips "${first}" validation and produces unstructured output.` : 'Ad-hoc one-shot response that skips validation and produces unstructured output.',
+        after: first && last ? `Follows the ${allNodes.length === flowNodes.length ? flowNodes.length + '-step ' : ''}workflow (${first} → … → ${last}) to deliver verified, structured results.` : 'Follows the skill\'s workflow step by step to deliver verified, structured results.',
       };
     }
     if (tcCache[rawName]) return tcCache[rawName];
@@ -1238,58 +1374,54 @@
     if (SKILL_TEST_CASES[slug]) return SKILL_TEST_CASES[slug];
     if (s && state.server) requestTestCase(s, rawName);
 
-    const flowNodes = (sp && sp.lanes ? sp.lanes : []).filter(l => l.kind !== 'ref').flatMap(l => l.nodes || []);
-    const stepTitles = flowNodes.map(n => n.title).filter(Boolean);
-    const firstStep = stepTitles[0] || '环境预检与输入解析';
-    const midStep = stepTitles[Math.floor(stepTitles.length / 2)] || '核心处理';
-    const lastStep = stepTitles[stepTitles.length - 1] || '结构化交付';
-    const decNode = flowNodes.find(n => n.type === 'decision');
-    const chain = stepTitles.length >= 3
-      ? `${firstStep} → ${midStep} → ${lastStep}`
-      : stepTitles.length === 2
-        ? `${firstStep} → ${lastStep}`
-        : firstStep;
-    const hay = `${rawName} ${dispName} ${(s && s.description) || ''} ${(sp && sp.description) || ''}`.toLowerCase();
+    const q = x => `「${x}」`;
+    const chain = steps.length >= 3 ? `${first} → ${mid} → ${last}` : steps.length === 2 ? `${first} → ${last}` : '';
+    const flow = chain ? `按${q(chain)}流程` : '按它定义的流程';
+    const gate = decNode ? `，并经${q(decNode.title)}把关` : '';
+    const span = first && last ? `从${q(first)}到${q(last)}` : '从头到尾';
+    const nameHay = `${rawName} ${dispName}`.toLowerCase().replace(/[_\-./]+/g, ' ');
+    const kinds = TC_KINDS.filter(([, re]) => re.test(nameHay)).map(([k]) => k);
+    const kind = kinds.length === 1 ? kinds[0] : '';
 
-    if (/video|film|animat|remotion|clip|caption|audio|voice|speech|配音|视频|动画|分镜|字幕/.test(hay)) {
+    if (kind === 'video') {
       return {
-        input: `用「${dispName}」处理一段 15 秒的测试素材，按流程跑通「${firstStep}」到「${lastStep}」并输出预览`,
-        before: `仅输出零散文字脚本或粗糙参数，缺少「${firstStep}」把关，容易出现音画不同步或排版错位。`,
-        after: `严格遵循「${chain}」标准流水线，完成时间轴对齐与质量核验，直接产出可播放的规范成品。`,
+        input: `用${q(dispName)}处理一段 15 秒的测试素材，${span}跑通并输出预览`,
+        before: `仅输出零散文字脚本或粗糙参数，缺少${first ? q(first) : '关键步骤'}把关，容易出现音画不同步或排版错位。`,
+        after: `${flow}完成时间轴对齐与质量核验${gate}，直接产出可播放的规范成品。`,
       };
     }
-    if (/review|bug|debug|test|tdd|qc|security|audit|diagnos|fix|conflict|审查|测试|缺陷|诊断|冲突|安全/.test(hay)) {
+    if (kind === 'review') {
       return {
-        input: `针对当前改动或最小复现用例运行「${dispName}」，完成「${firstStep}」并输出验证结论`,
-        before: `凭直觉扫一眼代码直接猜结论，跳过「${firstStep}」与边界验证，极易漏掉深层隐患。`,
-        after: `按「${chain}」闭环排查${decNode ? `，通过「${decNode.title}」严格把关` : ''}，给出带根因证据的可验证修复方案。`,
+        input: `针对当前改动或最小复现用例运行${q(dispName)}，${first ? `完成${q(first)}并` : ''}输出验证结论`,
+        before: `凭直觉扫一眼代码直接猜结论，跳过${first ? q(first) : '关键步骤'}与边界验证，极易漏掉深层隐患。`,
+        after: `${flow}闭环排查${gate}，给出带根因证据的可验证修复方案。`,
       };
     }
-    if (/doc|pdf|ppt|slide|xls|sheet|excel|report|memo|article|write|readme|changelog|文档|报告|周报|文章|表格|演示/.test(hay)) {
+    if (kind === 'doc') {
       return {
-        input: `给出一份 3 条要点的测试提纲，用「${dispName}」生成排版规范的成品文件`,
-        before: `直接生成一段纯文本大纲，格式简陋、层级混乱，还需要人工花大量时间重新排版。`,
-        after: `经过「${chain}」规范化处理，自动套用专业版式、结构层级与校验规则，输出可直接交付的文档。`,
+        input: `给出一份 3 条要点的测试提纲，用${q(dispName)}生成排版规范的成品文件`,
+        before: '直接生成一段纯文本大纲，格式简陋、层级混乱，还需要人工花大量时间重新排版。',
+        after: `${flow}规范化处理${gate}，自动套用专业版式、结构层级与校验规则，输出可直接交付的文档。`,
       };
     }
-    if (/design|ui|frontend|figma|3d|image|photo|chibi|sticker|style|glass|map|scene|设计|前端|界面|照片|图像|三维|建模/.test(hay)) {
+    if (kind === 'design') {
       return {
-        input: `提供一张测试参考图或一句话需求，调用「${dispName}」完成从「${firstStep}」到「${lastStep}」的生成`,
-        before: `直接用笼统提示词一步直出，比例失调、细节粗糙且风格前后不一致。`,
-        after: `严格执行「${chain}」精修流程，统一设计令牌与空间结构，交付高还原度、高审美的视觉成品。`,
+        input: `提供一张测试参考图或一句话需求，调用${q(dispName)}完成${span}的生成`,
+        before: '直接用笼统提示词一步直出，比例失调、细节粗糙且风格前后不一致。',
+        after: `${flow}精修${gate}，统一设计令牌与空间结构，交付高还原度、高审美的视觉成品。`,
       };
     }
-    if (/deploy|cloud|vercel|netlify|render|docker|mcp|server|cli|setup|config|env|插件|部署|配置|服务|接口/.test(hay)) {
+    if (kind === 'deploy') {
       return {
-        input: `在当前测试目录启用「${dispName}」，按步骤完成「${firstStep}」并跑通连通性验证`,
-        before: `手动翻文档拼凑配置与命令，常因环境变量缺失、端口冲突或权限格式错误而反复报错。`,
-        after: `按「${chain}」自动化完成环境预检、配置写入与端到端健康检查，确保一次跑通。`,
+        input: `在当前测试目录启用${q(dispName)}，${first ? `按步骤完成${q(first)}并` : ''}跑通连通性验证`,
+        before: '手动翻文档拼凑配置与命令，常因环境变量缺失、端口冲突或权限格式错误而反复报错。',
+        after: `${flow}自动化完成环境预检、配置写入与端到端健康检查${gate}，确保一次跑通。`,
       };
     }
     return {
-      input: `给一个最小测试任务：「用【${dispName}】跑通从“${firstStep}”到“${lastStep}”并展示结果」`,
-      before: `未加载技能时仅靠通用回答一步直出，跳过「${firstStep}」等关键约束，结果笼统且不可控。`,
-      after: `启用技能后严格按「${chain}」共 ${flowNodes.length || 1} 个核心步骤推进${decNode ? `，并经「${decNode.title}」校验` : ''}，产出标准可复现结果。`,
+      input: `给一个最小测试任务：用${q(dispName)}${span}跑通并展示结果`,
+      before: '未加载技能时仅靠通用回答一步直出，容易跳过关键约束，结果笼统且不可控。',
+      after: `启用技能后${flow}逐步推进${gate}，产出标准可复现的结果。`,
     };
   }
 
@@ -1345,7 +1477,7 @@
         <button class="btn ghost" data-goto="" style="margin:-6px 0 8px -8px">${iconSvg('chevron-left', 14)}${t('detail.back')}</button>
         <h3>${esc(n.title)}</h3>
         <div class="meta"><span class="badge">${t('type.' + (n.type || 'step'))}</span>${n.optional ? `<span class="badge">${t('detail.optional')}</span>` : ''}${n.tag ? `<span>${esc(n.tag)}</span>` : ''}${lane ? `<span>· ${esc(lane.title)}</span>` : ''}</div>
-        ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd>${esc(zhPathText(n.path, s))}</dd></dl>` : ''}
+        ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd><code class="path">${esc(n.path)}</code></dd></dl>` : ''}
         ${lines ? `<div class="md"><p>${esc(lines).replace(/\n/g, '<br>')}</p></div>` : ''}
         ${ins.length ? `<div class="section-title">${t('detail.from')}</div><div class="links">${ins.map(e => link(e.from, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'in')).join('')}</div>` : ''}
         ${outs.length || stubs.length ? `<div class="section-title">${t('detail.to')}</div><div class="links">${outs.map(e => link(e.to, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'out')).join('')}${stubs.map(x => `<button disabled>${iconSvg('chevron-right', 14)}${esc(x.text)}<small>${esc(x.label || t('detail.exit'))}</small></button>`).join('')}</div>` : ''}
@@ -1353,16 +1485,27 @@
         ${n.detail ? `<div class="section-title">${t('detail.original')}${trToggle(n.detail)}</div><div class="md">${detailHtml(n.detail)}</div>` : ''}`;
       return;
     }
-    const fm = sp.frontMatter || {};
+    const phase = state.hier && state.hier.phases.find(p => p.id === state.view.phase);
+    if (phase) {
+      const refs = sp.lanes.filter(l => l.kind === 'ref').flatMap(l => l.nodes);
+      const source = state.rawSpec.source || '';
+      el.innerHTML = `<h3>${esc(sp.title)}</h3><div class="meta"><span class="badge">${esc(phaseBadge(phase))}</span></div>
+        <div class="md"><p>${esc(sp.subtitle || '')}</p></div>
+        ${refs.length ? `<div class="section-title">${t('detail.reads')}</div><div class="links ref-list">${refs.map(n => `<button data-goto="${esc(n.id)}"${n.path ? ` title="${esc(n.path)}"` : ''}>${esc(n.title)}${n.path ? `<small>${esc(n.path)}</small>` : ''}</button>`).join('')}</div>` : ''}
+        ${source ? `<div class="section-title">${t('detail.original')}${trToggle(source)}</div><div class="md">${detailHtml(source)}</div>` : ''}`;
+      return;
+    }
+    const fm = (state.fullSpec || sp).frontMatter || {};
     const extra = Object.keys(fm).filter(k => k !== 'name' && k !== 'description');
     const srcName = t('src.' + (sp.source || 'auto'));
     const warnings = (sp.warnings || []).concat(state.G ? state.G.warnings : []).concat(state.specError ? [state.specError] : []);
     const dispName = skillDisplayName(s);
-    const dispPath = zhPathText(s.full || s.path || t('detail.pasted'), s);
+    const realPath = s.full || s.path || '';
     el.innerHTML = `
       <h3>${esc(sp.title || dispName)}</h3>
       <div class="meta"><span class="badge ${sp.source === 'auto' ? '' : 'flow'}">${srcName}</span><span>${esc(groupName(s))}</span></div>
       ${renderTestCaseCard(s, sp)}
+      ${state.hier ? `<div class="section-title">${t('hier.phases')}</div><div class="links phase-list">${state.hier.phases.map(p => `<button ${p.drill ? `data-phase="${p.id}"` : `data-goto="${p.id}"`}><span>${esc(phaseText(p.title))}</span><small>${esc(p.badge)}</small>${p.drill ? ' ›' : ''}</button>`).join('')}</div>` : ''}
       <div class="md"><p>${esc(listDesc(s) || sp.description || t('detail.noDesc'))}</p></div>
       <div class="stats">
         <div class="stat"><b>${sp.lanes.length}</b><span>${t('detail.lanes')}</span></div>
@@ -1371,8 +1514,8 @@
       </div>
       ${warnings.length ? `<div class="section-title">${t('detail.notes')}</div>${warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('')}` : ''}
       <div class="section-title">${t('detail.file')}</div>
-      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(dispName)}</dd><dt>${t('detail.path')}</dt><dd>${esc(dispPath)}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(state.lang === 'zh' ? (ZH_FM_KEYS[k] || k) : k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
-      ${s.files && s.files.length ? `<div class="section-title">${t('detail.files', s.files.length)}</div><div class="files">${s.files.slice(0, 40).map(f => esc(zhFileItem(f))).join('<br>')}${s.files.length > 40 ? '<br>…' : ''}</div>` : ''}
+      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(dispName)}${s.name && dispName !== s.name ? ` <code class="path">${esc(s.name)}</code>` : ''}</dd><dt>${t('detail.path')}</dt><dd>${realPath ? `<code class="path">${esc(realPath)}</code>` : esc(t('detail.pasted'))}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(state.lang === 'zh' && Object.prototype.hasOwnProperty.call(ZH_FM_KEYS, k) ? ZH_FM_KEYS[k] : k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
+      ${s.files && s.files.length ? `<div class="section-title">${t('detail.files', s.files.length)}</div><div class="files">${s.files.slice(0, 40).map(f => esc(f)).join('<br>')}${s.files.length > 40 ? '<br>…' : ''}</div>` : ''}
       <div class="section-title">${t('detail.howto')}</div>
       <div class="hint">${t('detail.howtoText')}</div>`;
   }
@@ -1387,17 +1530,20 @@
     // 只给行内代码路径加断点，代码块保留原文
     const html = text => SV.md.toHtml(text).replace(/<pre\b[\s\S]*?<\/pre>|<code\b[^>]*>[\s\S]*?<\/code>/g, part => part.startsWith('<pre') ? part : part.replace(/>([^<]*)<\/code>/, (_, code) => '>' + code.replace(/\//g, '/<wbr>') + '</code>'));
     if (!detailNeedsTr(md) || state.showOrig) return html(md);
-    const hit = TR.cache[trKey(state.lang, md)];
+    const key = trKey(state.lang, md);
+    const hit = TR.cache[key];
     if (hit != null) return html(hit);
-    const sel = state.selected;
-    requestTr([md], true, () => { if (state.selected === sel) renderDetail(); });
+    const failed = TR.failedAt.get(key);
+    if (failed && Date.now() - failed < 30000) return `<p class="hint">${t('tr.detailFail')}</p>` + html(md); // 刚失败过：先显示原文，别每次重绘都重发
+    const sel = state.selected, raw = state.rawSpec;
+    requestTr([md], { channel: 'detail', markdown: true, done: () => { if (state.selected === sel && state.rawSpec === raw) renderDetail(); } });
     return `<p class="hint">${t('tr.translating')}</p>` + html(md);
   }
 
   function renderStruct() {
     const s = findSkill(state.currentId);
     if (!s || !state.rawSpec) return;
-    $('#editor').value = state.overrides[s.id] || SV.dsl.serialize(state.rawSpec);
+    $('#editor').value = SV.dsl.serialize(state.fullSpec);
     $('#editorWarn').textContent = '';
   }
 
@@ -1434,10 +1580,11 @@
   function cleanSpec(spec) {
     return JSON.parse(JSON.stringify(spec, (k, v) => (k === 'detail' || k === 'frontMatter' ? undefined : v)));
   }
-  function standaloneHtml() {
+  function standaloneHtml(allLevels = false) {
+    if (allLevels && state.fullSpec) return standaloneAllHtml();
     const spec = cleanSpec(state.spec);
     const P = SV.render.THEMES[state.theme] || SV.render.THEMES.dark;
-    const mods = ['i18n', 'markdown', 'extract', 'layout', 'render'].map(k => `SV.mod.${k} = ${SV.mod[k].toString()};\nSV.mod.${k}(SV);`).join('\n').replace(/<\/script/gi, '<\\/script');
+    const mods = ['i18n', 'markdown', 'extract', ...(SV.mod.hier ? ['hier'] : []), 'layout', 'render'].map(k => `SV.mod.${k} = ${SV.mod[k].toString()};\nSV.mod.${k}(SV);`).join('\n').replace(/<\/script/gi, '<\\/script');
     const json = JSON.stringify(spec).replace(/</g, '\\u003c');
     return `<!doctype html>
 <html lang="${state.lang === 'zh' ? 'zh-CN' : 'en'}">
@@ -1499,19 +1646,138 @@ SV.i18n.set('${state.lang}');
 </html>`;
   }
 
-  async function exportVideo() {
+  function standaloneAllHtml() {
+    const full = translateSpec(state.fullSpec, state.lang).spec;
+    const json = JSON.stringify(full).replace(/</g, '\\u003c');
+    const script = `(async function () {
+  var full = ${json};
+  if (document.fonts && document.fonts.load) {
+    var text = JSON.stringify(full), jobs = [];
+    ['400 14px', '500 14px', '700 18px', '800 40px'].forEach(function (w) {
+      jobs.push(document.fonts.load(w + ' "Noto Sans SC"', text), document.fonts.load(w + ' Inter', text));
+    });
+    jobs.push(document.fonts.load('500 11px "JetBrains Mono"', text));
+    await Promise.race([Promise.all(jobs).catch(function () {}), new Promise(function (r) { setTimeout(r, 6000); })]);
+  }
+  SV.layoutUtil.clearCache();
+  var hier = SV.hier.build(full), query = new URLSearchParams(location.search), recording = query.has('record');
+  var motion = recording ? (query.get('motion') === 'flat' || query.get('motion') === 'minimal' ? 'flat' : '3d') : '${state.motion}';
+  var stage = document.getElementById('stage'), back = document.getElementById('back'), heading = document.getElementById('level'), card = document.getElementById('titleCard');
+  var levels = [hier.overview].concat(hier.phases.filter(function (p) { return p.drill; }).map(function (p) { return hier.detail(p.id); }));
+  var p, G, cam, current = -1, playing = ${state.playing}, timeline = [], end = 0;
+  function player(graph, el, autoplay) {
+    return SV.render.createPlayer(el.querySelector('svg'), graph, { autoplay: autoplay, loop: !recording, reducedMotion: motion === 'minimal', camera: { el: el, strength: motion === '3d' ? 1 : 0 } });
+  }
+  var views = levels.map(function (spec) {
+    var graph = SV.layout(spec, { cols: ${state.cols} });
+    var html = '<div class="sv-cam">' + SV.render.toSVG(graph, { theme: '${state.theme}' }) + '</div>';
+    stage.innerHTML = html;
+    var temp = player(graph, stage.querySelector('.sv-cam'), false);
+    var round = temp.tour && temp.tour.segs.filter(function (s) { return s.round === 0; }).pop();
+    var duration = temp.intro + (round ? round.t1 : temp.duration || 2.4);
+    temp.destroy();
+    timeline.push({ start: end, duration: duration });
+    end += .9 + duration;
+    return { spec: spec, graph: graph, html: html };
+  });
+  // 录制器上限九十秒；统一加速仍保留每层完整首轮
+  var duration = Math.min(90, end), rate = end / duration;
+  function resizeCamera() {
+    if (!cam) return;
+    cam.style.width = Math.min(innerWidth, G.W, innerHeight * G.W / G.H) + 'px';
+    p.setCamera({ width: cam.clientWidth || G.W, height: cam.clientHeight || G.H });
+  }
+  function show(index, active) {
+    if (current === index) return;
+    if (p) p.destroy();
+    current = index;
+    var view = views[index];
+    G = view.graph;
+    stage.innerHTML = view.html;
+    cam = stage.querySelector('.sv-cam');
+    p = player(G, cam, active && playing && !recording);
+    resizeCamera();
+    back.hidden = index === 0;
+    var phase = hier.phases.find(function (phase) { return phase.id === view.spec.phase; });
+    heading.textContent = phase ? full.title + ' › ' + (phase.laneTitle ? phase.laneTitle + ' › ' : '') + phase.title + ' · ' + phase.badge : full.title;
+    document.title = heading.textContent + ' · ' + SV.i18n.t('app.title');
+  }
+  function navigate(index, push) {
+    card.hidden = true;
+    show(index, true);
+    var phase = views[index].spec.phase;
+    history[push ? 'pushState' : 'replaceState']({ drill: !!push }, '', '#'+ (phase ? 'node=' + phase : 'overview'));
+  }
+  function overview() {
+    if (history.state && history.state.drill) history.back(); else navigate(0, false);
+  }
+  function restore() {
+    var phase = new URLSearchParams(location.hash.slice(1)).get('node');
+    var index = views.findIndex(function (v) { return v.spec.phase === phase; });
+    card.hidden = true;
+    show(Math.max(0, index), true);
+  }
+  back.onclick = overview;
+  stage.addEventListener('click', function (e) {
+    var el = e.target.closest('.sv-node'), node = el && G.nodes[el.dataset.node];
+    if (current === 0 && node && node.spec.drill) {
+      navigate(views.findIndex(function (v) { return v.spec.phase === node.spec.drill; }), true);
+    } else { playing = !playing; p.toggle(); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') overview();
+    if (e.key === 'Enter') {
+      var el = e.target.closest('.sv-drill');
+      if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    if (e.code === 'Space' && !e.target.closest('button')) { playing = !playing; p.toggle(); e.preventDefault(); }
+    if (e.key === 'ArrowRight') p.next();
+    if (e.key === 'ArrowLeft') p.prev();
+  });
+  window.addEventListener('popstate', restore);
+  window.addEventListener('hashchange', restore);
+  window.addEventListener('resize', resizeCamera);
+  show(0, true);
+  restore();
+  window.SVRec = {
+    info: function () { return { W: 1280, H: 900, duration: duration, round0: duration }; },
+    seek: function (t) {
+      var time = Math.max(0, Math.min(end - .00001, t * rate)), index = timeline.length - 1;
+      for (var i = 0; i < timeline.length; i++) if (time < timeline[i].start + .9 + timeline[i].duration) { index = i; break; }
+      show(index, false);
+      p.pause();
+      var local = time - timeline[index].start, title = index ? views[index].spec.title : SV.i18n.t('hier.overview');
+      p.seek(Math.max(0, local - .9));
+      card.hidden = local >= .9;
+      card.style.opacity = String(Math.max(0, Math.min(1, local / .12, (.9 - local) / .15)));
+      card.textContent = title;
+      resizeCamera();
+    }
+  };
+  window.seek = window.SVRec.seek;
+})();`;
+    return standaloneHtml(false)
+      .replace('<div id="stage"></div>', `<button id="back" hidden>${esc(t('hier.back'))}</button><div id="level"></div><div id="stage"></div><div id="titleCard" hidden></div>`)
+      .replace('</style>', `#back{position:fixed;left:16px;top:16px;z-index:4;padding:8px 14px;border:1px solid ${SV.render.THEMES[state.theme].text3};border-radius:10px;background:${SV.render.THEMES[state.theme].page};color:${SV.render.THEMES[state.theme].text};cursor:pointer}
+#level{position:fixed;top:18px;left:145px;right:16px;text-align:right;z-index:3;color:${SV.render.THEMES[state.theme].text};font:13px sans-serif;pointer-events:none}
+#titleCard{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:${SV.render.THEMES[state.theme].page};color:${SV.render.THEMES[state.theme].text};font:700 38px sans-serif;text-align:center;padding:60px}
+[hidden]{display:none!important}</style>`)
+      .replace(/<script>\s*\(async function[\s\S]*?<\/script>/, () => '<script>\n' + script.replace(/<\/script/gi, '<\\/script') + '\n</script>');
+  }
+
+  async function exportVideo(allLevels = false) {
     if (!state.server) {
       const s = findSkill(state.currentId);
       toast(t('toast.videoNeedServer', s ? s.name : 'skill'), 6500);
       return;
     }
-    const secs = prompt(t('toast.videoAsk'), '');
+    const secs = prompt(t(allLevels ? 'toast.videoAskAll' : 'toast.videoAsk'), '');
     if (secs === null) return;
     toast(t('toast.recording'), 600000);
     try {
       const r = await fetch('api/record', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: safeName(state.spec.name), html: standaloneHtml(), motion: state.motion === 'minimal' ? 'flat' : state.motion, seconds: secs ? +secs : null }),
+        body: JSON.stringify({ name: safeName(state.spec.name), html: standaloneHtml(allLevels), motion: state.motion === 'minimal' ? 'flat' : state.motion, seconds: secs ? +secs : null }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || r.statusText);
@@ -1525,10 +1791,10 @@ SV.i18n.set('${state.lang}');
     const base = safeName(state.spec.name);
     if (kind === 'svg') download(base + '.svg', svgString(), 'image/svg+xml');
     else if (kind === 'png') await exportPng();
-    else if (kind === 'html') download(base + '.html', standaloneHtml(), 'text/html;charset=utf-8');
-    else if (kind === 'video') await exportVideo();
+    else if (kind === 'html' || kind === 'html-all') download(base + (kind === 'html-all' ? '-all' : '') + '.html', standaloneHtml(kind === 'html-all'), 'text/html;charset=utf-8');
+    else if (kind === 'video' || kind === 'video-all') await exportVideo(kind === 'video-all');
     else if (kind === 'spec') download(base + '.skillflow.json', JSON.stringify(cleanSpec(state.spec), null, 2), 'application/json');
-    else if (kind === 'flow') { await copy('```skillflow\n' + $('#editor').value + '\n```'); toast(t('toast.copied')); }
+    else if (kind === 'flow') { await copy('```skillflow\n' + SV.dsl.serialize(state.fullSpec) + '\n```'); toast(t('toast.copied')); }
   }
 
   /* —— 演示模式 —— */
@@ -1559,7 +1825,7 @@ SV.i18n.set('${state.lang}');
       const head = e.target.closest('.group-head:not(.static)');
       if (head) {
         const box = head.parentElement;
-        state.collapsed[box.dataset.group] = box.dataset.folded !== '1';
+        state.collapsed[box.dataset.group] = box.dataset.folded !== '1'; // 键是 groupId，不随语言变
         store.set('collapsed', state.collapsed);
         renderList();
         return;
@@ -1602,8 +1868,9 @@ SV.i18n.set('${state.lang}');
       draw(true);
       renderHeader();
       renderDetail();
-      if (!state.translate) toast(state.lang === 'zh' ? '已切回原文' : 'Switched to original', 1500);
+      if (!state.translate) toast(t('tr.origToast'), 1500);
     };
+    $('#trStatus').onclick = () => { if (state.translate && !state.trInfo.busy && state.trInfo.missing) useTranslation(true); }; // 点状态条：重试没译出来的
     $('#btnExitPresent').onclick = () => setPresent(false);
     $('#btnPanel').onclick = () => togglePanel();
 
@@ -1613,7 +1880,17 @@ SV.i18n.set('${state.lang}');
     menu.querySelectorAll('[data-export]').forEach(b => { b.onclick = () => { menu.classList.remove('open'); doExport(b.dataset.export); }; });
 
     $$('.tab').forEach(t => { t.onclick = () => showTab(t.dataset.tab); });
+    $('#btnOverview').onclick = overview;
+    $('#phasePager').addEventListener('click', e => {
+      const go = e.target.closest('[data-go]');
+      if (go && go.dataset.go) openPhase(go.dataset.go, 'sibling');
+    });
+    $('#current').addEventListener('click', e => { if (e.target.closest('[data-overview]')) overview(); });
+    window.addEventListener('popstate', restoreView);
+    window.addEventListener('hashchange', restoreView);
     $('#detail').addEventListener('click', e => {
+      const phase = e.target.closest('[data-phase]');
+      if (phase) { openPhase(phase.dataset.phase); return; }
       const cp = e.target.closest('[data-copy-prompt]');
       if (cp) { copy(cp.dataset.copyPrompt); toast(t('tc.copied')); return; }
       if (e.target.closest('[data-orig]')) { state.showOrig = !state.showOrig; renderDetail(); return; }
@@ -1639,12 +1916,20 @@ SV.i18n.set('${state.lang}');
         state.overrides[s.id] = text;
         store.set('overrides', state.overrides);
         sp.source = 'edited';
-        state.rawSpec = mergeDetails(sp, state.autoSpec);
-        useTranslation();
+        clearReads();
+        trAbort('detail');
+        state.selected = null;
+        state.showOrig = false;
+        state.zoom = 'fit';
+        const full = mergeDetails(sp, state.autoSpec);
+        setFullSpec(full);
+        Object.assign(specCache.get(s.id), { full, hier: state.hier, override: text, lang: state.lang, error: '' });
+        writeView(false);
         draw();
+        renderHeader();
         renderDetail();
         renderList();
-        $('#editorWarn').textContent = (sp.warnings || []).join('；');
+        $('#editorWarn').textContent = (sp.warnings || []).join(t('warn.sep'));
         toast(t('toast.applied'));
       } catch (e) { $('#editorWarn').textContent = t('toast.parseFail', e.message); }
     };
@@ -1717,7 +2002,7 @@ SV.i18n.set('${state.lang}');
       stage.classList.remove('panning');
       if (moved) return;
       const node = e.target.closest && e.target.closest('.sv-node');
-      if (node) selectNode(node.dataset.node);
+      if (node) activateNode(node.dataset.node);
       else {
         clearReads();
         if (e.target.closest && e.target.closest('svg')) { state.selected = null; markSelected(null); renderDetail(); }
@@ -1745,9 +2030,29 @@ SV.i18n.set('${state.lang}');
     window.addEventListener('resize', () => { if (state.zoom === 'fit') applyZoom(); });
 
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') clearReads();
+      if (e.ctrlKey || e.metaKey || e.altKey) return; // 别抢浏览器 / 系统的组合键（Ctrl+0 缩放、Ctrl+D 书签…）
+      if (e.key === 'Escape') {
+        const hadSelection = state.selected || readPin;
+        clearReads();
+        const modal = $('#pasteModal');
+        if (modal && !modal.hidden) { modal.hidden = true; return; }
+        if (hadSelection) {
+          state.selected = null; markSelected(null); renderDetail();
+        } else if (state.view.phase) overview();
+        else if (document.body.classList.contains('present')) setPresent(false);
+        return;
+      }
       if (e.target.closest('input, textarea, select')) return;
-      if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); }
+      if (e.key === 'Enter') {
+        const node = e.target.closest('.sv-node');
+        const id = node ? node.dataset.node : state.selected;
+        if (id && !e.target.closest('button, a, input, textarea, select')) { e.preventDefault(); activateNode(id); }
+      }
+      else if (e.code === 'Space') {
+        if (e.target.closest('button, a[href], summary, [role="button"]')) return; // 焦点在按钮 / 链接上，空格留给它自己
+        e.preventDefault();
+        setPlaying(!state.playing);
+      }
       else if (e.key === 'ArrowRight') { setPlaying(false); state.player && state.player.next(); }
       else if (e.key === 'ArrowLeft') { setPlaying(false); state.player && state.player.prev(); }
       else if (e.key === '+' || e.key === '=') zoomBy(1.15);
@@ -1755,7 +2060,6 @@ SV.i18n.set('${state.lang}');
       else if (e.key === '0') { state.zoom = 'fit'; applyZoom(); }
       else if (e.key === 'd' || e.key === 'D') setMotion(state.motion === '3d' ? 'flat' : '3d');
       else if (e.key === 'f' || e.key === 'F') setPresent(!document.body.classList.contains('present'));
-      else if (e.key === 'Escape') { setPresent(false); $('#pasteModal').hidden = true; }
     });
   }
 
@@ -1802,14 +2106,15 @@ SV.i18n.set('${state.lang}');
     await loadSources();
     await loadOfficialStatus();
     renderList();
-    const want = params.get('skill') || decodeURIComponent((location.hash.match(/skill=([^&]+)/) || [])[1] || '') || store.get('last', '');
+    const initial = hashView();
+    const want = initial.skill || params.get('skill') || store.get('last', '');
     const pick = state.skills.find(s => s.id === want) || state.skills.find(s => s.name === want) || state.skills.find(s => s.id.endsWith(want) && want) || state.skills[0];
     if (params.has('present') || RECORD) setPresent(true);
     if (RECORD) document.body.classList.add('recording');
-    if (pick) select(pick.id); else showEmpty();
+    if (pick) select(pick.id, false, initial.phase || params.get('node')); else showEmpty();
     watch();
     // 给自动化脚本用（录制、测试）
-    window.SVApp = { state, select, exportHtml: standaloneHtml, setLang };
+    window.SVApp = { state, select, openPhase, exportHtml: standaloneHtml, setLang, TR };
     if (RECORD && state.spec) {
       await ensureFonts(state.spec, 8000);
       await new Promise(r => setTimeout(r, 300));

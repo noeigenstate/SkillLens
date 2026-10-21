@@ -16,7 +16,7 @@
     <header class="topbar">
       <div class="brand"><i data-icon="workflow"></i><span data-t="app.title">技能图解</span> <small class="tool-hidden" data-t="app.tagline">技能文档 → 3D 动态流程图</small></div>
       <div class="current" id="current"><b data-t="current.none">未选择技能</b></div>
-      <span class="tr-chip tool-hidden" id="trStatus" hidden></span>
+      <button type="button" class="tr-chip" id="trStatus" hidden></button>
       <div class="tools">
         <button class="btn icon" id="btnPrev" data-t-title="btn.prev"><i data-icon="chevron-left"></i></button>
         <button class="btn primary" id="btnPlay" data-t-title="btn.playTitle"><i data-icon="pause"></i><span>暂停</span></button>
@@ -54,9 +54,11 @@
           <button class="btn" id="btnExport"><i data-icon="download"></i><span data-t="btn.export">导出</span></button>
           <div class="menu-list">
             <button data-export="html"><i data-icon="file-code"></i><span data-t="exp.html">独立网页（含动画）</span><small>.html</small></button>
+            <button data-export="html-all"><i data-icon="file-code"></i><span data-t="exp.htmlAll">Web page (all levels)</span><small>.html</small></button>
             <button data-export="svg"><i data-icon="image"></i><span data-t="exp.svg">当前画面矢量图</span><small>.svg</small></button>
             <button data-export="png"><i data-icon="image"></i><span data-t="exp.png">当前画面高清图（2×）</span><small>.png</small></button>
             <button data-export="video"><i data-icon="film"></i><span data-t="exp.video">录制演示视频</span><small>.mp4</small></button>
+            <button data-export="video-all"><i data-icon="film"></i><span data-t="exp.videoAll">Video (all levels)</span><small>.mp4</small></button>
             <hr>
             <button data-export="flow"><i data-icon="clipboard-copy"></i><span data-t="exp.flow">复制流程代码块</span></button>
             <button data-export="spec"><i data-icon="braces"></i><span data-t="exp.spec">导出结构数据</span><small>.json</small></button>
@@ -79,6 +81,14 @@
     </aside>
 
     <main class="stage-wrap">
+      <div class="stage-nav">
+        <button class="btn overview-back" id="btnOverview" data-t="hier.back" data-t-title="hier.backTitle" hidden>‹ Overview</button>
+        <div class="phase-pager" id="phasePager" hidden>
+          <button class="btn" id="btnPhasePrev" data-t="hier.prevPhase">‹ Previous phase</button>
+          <span id="phasePos"></span>
+          <button class="btn" id="btnPhaseNext" data-t="hier.nextPhase">Next phase ›</button>
+        </div>
+      </div>
       <div class="stage" id="stage"><div class="canvas" id="canvas"></div></div>
       <div class="empty" id="empty" hidden>
         <div>
@@ -134,6 +144,7 @@
   <script src="src/markdown.js"></script>
   <script src="src/extract.js"></script>
   <script src="src/dsl.js"></script>
+  <script src="src/hier.js"></script>
   <script src="src/layout.js"></script>
   <script src="src/render.js"></script>
   <script src="data/skills.js" onerror="window.SV_DATA = window.SV_DATA || null"></script>

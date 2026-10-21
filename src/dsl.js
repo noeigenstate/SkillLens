@@ -31,9 +31,11 @@ SV.mod.dsl = function (SV) {
     const lines = String(src || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n');
     let lane = null, node = null, nodeIndent = 0, inFlow = false, hasFlow = false;
 
-    const addNode = (n) => {
+    const addNode = (n, line) => {
       if (!n.id) n.id = 'n' + (++auto);
+      const id = n.id;
       while (nodes[n.id] && nodes[n.id] !== n) n.id += '_';
+      if (n.id !== id) spec.warnings.push(SV.i18n.t('warn.dupId', line, id, n.id));
       nodes[n.id] = n;
       return n;
     };
@@ -65,7 +67,7 @@ SV.mod.dsl = function (SV) {
       }
       if (ind === 0 && (m = line.match(/^trigger(?:\s+([\w-]+))?\s*:\s*(.*)$/i))) {
         const h = parseHead(m[2]);
-        node = addNode({ id: m[1] || 'start', type: 'trigger', title: h.text, tag: h.tag, icon: h.icon || 'bell', lines: [] });
+        node = addNode({ id: m[1] || 'start', type: 'trigger', title: h.text, tag: h.tag, icon: h.icon || 'bell', lines: [] }, li + 1);
         nodeIndent = ind;
         spec.trigger = node;
         lane = null;
@@ -79,23 +81,24 @@ SV.mod.dsl = function (SV) {
         continue;
       }
       if (lane && (m = line.match(/^note\s*:\s*(.*)$/i))) { lane.notes.push(m[1].trim()); continue; }
+      if (lane && (m = line.match(/^summary\s*:\s*(.*)$/i))) { lane.summary = (lane.summary || []).concat(m[1].trim()).slice(0, 2); continue; }
       if (lane && (m = line.match(/^(step|node|decide|decision|if|card)(?:\s+([\w-]+))?\s*:\s*(.*)$/i))) {
         const h = parseHead(m[3]);
         const type = /^(decide|decision|if)$/i.test(m[1]) ? 'decision' : 'step';
-        node = addNode({ id: m[2], type, title: h.text, tag: h.tag, icon: h.icon, lines: [], optional: h.flags.includes('optional'), terminal: h.flags.includes('end') || h.flags.includes('terminal') });
+        node = addNode({ id: m[2], type, title: h.text, tag: h.tag, icon: h.icon, lines: [], optional: h.flags.includes('optional'), terminal: h.flags.includes('end') || h.flags.includes('terminal') }, li + 1);
         nodeIndent = ind;
         lane.nodes.push(node);
         continue;
       }
       if (lane && (m = line.match(/^[-*]\s+(.*)$/))) {
         const h = parseHead(m[1]);
-        node = addNode({ type: 'step', title: h.text, tag: h.tag, icon: h.icon, lines: [] });
+        node = addNode({ type: 'step', title: h.text, tag: h.tag, icon: h.icon, lines: [] }, li + 1);
         nodeIndent = ind;
         lane.nodes.push(node);
         continue;
       }
       if (/->|~>|=>|\.>/.test(line)) { parseEdgeLine(line, spec); hasFlow = true; continue; }
-      spec.warnings.push(`第 ${li + 1} 行没看懂：${line}`);
+      spec.warnings.push(SV.i18n.t('warn.dslLine', li + 1, line));
     }
 
     if (!hasFlow) {
@@ -106,14 +109,14 @@ SV.mod.dsl = function (SV) {
     }
     spec.edges = spec.edges.filter(e => {
       const ok = nodes[e.from] && (e.stub || nodes[e.to]);
-      if (!ok) spec.warnings.push(`连线 ${e.from} → ${e.to || e.stub} 引用了不存在的节点`);
+      if (!ok) spec.warnings.push(SV.i18n.t('warn.edgeMissing', e.from, e.to || e.stub));
       return ok;
     });
     spec.edges.filter(e => e.stub).forEach(e => spec.stubs.push({ from: e.from, text: e.stub, label: e.label || '' }));
     spec.edges = spec.edges.filter(e => !e.stub);
     spec.reads = spec.reads.filter(e => {
       const ok = nodes[e.from] && nodes[e.to];
-      if (!ok) spec.warnings.push(`连线 ${e.from} → ${e.to} 引用了不存在的节点`);
+      if (!ok) spec.warnings.push(SV.i18n.t('warn.edgeMissing', e.from, e.to));
       return ok;
     });
     spec.lanes.filter(l => l.kind === 'flow' || l.kind === 'bare').forEach(l => l.nodes.forEach(n => { n.numText = null; }));
@@ -179,6 +182,7 @@ SV.mod.dsl = function (SV) {
     for (const lane of spec.lanes) {
       const opts = [lane.color, lane.kind !== 'flow' ? lane.kind : ''].filter(Boolean).join(' ');
       out.push(`lane ${lane.id}: ${lane.title}${lane.tag ? ` [${lane.tag}]` : ''}${opts ? ` (${opts})` : ''}`);
+      (lane.summary || []).slice(0, 2).forEach(t => out.push(`  summary: ${t}`));
       for (const n of lane.nodes) {
         out.push(`  ${n.type === 'decision' ? 'decide' : 'step'} ${n.id}: ${head(n)}${n.terminal && !n.more ? ' +end' : ''}`);
         linesOf(n).forEach(l => out.push('    ' + l));

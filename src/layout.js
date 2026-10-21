@@ -3,7 +3,7 @@ SV.mod.layout = function (SV) {
   const FONT = '"Inter","Noto Sans SC","Source Han Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif';
   const MONO = '"JetBrains Mono","Cascadia Mono",Consolas,ui-monospace,monospace';
   const K = {
-    LANE_X: 88, RIGHT: 26, PAD: 18, CARD_W: 232, CARD_H: 134, TRIG_H: 150, GAP: 40,
+    LANE_X: 88, RIGHT: 26, PAD: 18, CARD_W: 232, CARD_H: 134, REF_H: 92, TRIG_H: 150, GAP: 40,
     DW: 176, DH: 156, HEADER: 84, ROW_GAP: 66, STUB_EXT: 64, LANE_PAD_B: 46, LANE_GAP: 50,
     TOP: 156, TEXT_X: 75, TEXT_W: 143, MARGIN_X: 58, NOTE_H: 33,
   };
@@ -25,6 +25,8 @@ SV.mod.layout = function (SV) {
 
   const TOKEN_RE = /[⺀-鿿豈-﫿　-〿＀-￯]|[^\s⺀-鿿豈-﫿　-〿＀-￯]+|\s+/g;
   const NO_START = /^[，。、；：？！）」』》〉】,.;:!?)\]}%…]/;
+  const HAN = /[㐀-鿿]/;
+  const OPENING = /[（(「『《〈【“‘\[]/;
 
   function fit(text, maxW, size, weight, family) {
     text = String(text || '');
@@ -73,7 +75,18 @@ SV.mod.layout = function (SV) {
       // 最后一行装不下：把剩下的拼起来按宽度截断
       lines.push(fit((cur + toks.slice(i).join('')).trim(), maxW, size, weight));
       if (!lines[lines.length - 1].endsWith('…')) lines[lines.length - 1] = fit(lines[lines.length - 1] + ' …', maxW, size, weight);
-    } else if (cur.trim()) lines.push(cur.trimEnd());
+    } else if (cur.trim()) {
+      // 末行只剩一个汉字：从上一行借一个字，避免「事/项」这样的孤字
+      const last = Array.from(cur.trim());
+      if (lines.length && last.length === 1 && HAN.test(cur)) {
+        const prev = Array.from(lines[lines.length - 1]);
+        if (prev.length > 2 && HAN.test(prev[prev.length - 1]) && !OPENING.test(prev[prev.length - 2])) {
+          cur = prev.pop() + cur;
+          lines[lines.length - 1] = prev.join('').trimEnd();
+        }
+      }
+      lines.push(cur.trimEnd());
+    }
     return lines;
   }
 
@@ -93,8 +106,9 @@ SV.mod.layout = function (SV) {
     return stem.slice(0, cut) + '…' + tail;
   }
 
-  /* 节点文字排版 */
-  function prepNode(sp, kind, hasReads) {
+  /* 节点文字排版；opt.w/h 给紧凑卡片，opt.compact 为总览里的参考资料条，opt.reader 表示有步骤读它 */
+  function prepNode(sp, kind, opt) {
+    opt = opt || {};
     const n = {
       id: sp.id, type: sp.type === 'trigger' ? 'trigger' : (sp.type || 'step'), spec: sp,
       icon: sp.icon || '', tag: sp.tag || '', terminal: !!sp.terminal, optional: !!sp.optional, more: !!sp.more,
@@ -108,34 +122,48 @@ SV.mod.layout = function (SV) {
       n.sub = n.tag ? fit(n.tag, 100, 12, 400) : '';
       return n;
     }
-    n.w = K.CARD_W;
-    n.h = kind === 'trigger' ? K.TRIG_H : K.CARD_H;
-    const title = String(sp.title || '');
-    let size = 18, titleLines;
-    if (hasReads && kind === 'ref' && title.split(' + ').every(p => /^[\w.@~/-]+\.\w{1,5}$/.test(p) || p.endsWith('/'))) {
-      // 文件名不折行：先缩字号，再收短前缀
-      size = [18, 16, 14.5, 13.5].find(s => measure(title, s, 700) <= K.TEXT_W) || 13.5;
-      titleLines = [shortFile(title, K.TEXT_W, size)];
+    n.w = opt.w || K.CARD_W;
+    n.h = kind === 'trigger' ? K.TRIG_H : opt.h || K.CARD_H;
+    n.compact = !!opt.compact;
+    const tw = n.textW = n.w - K.TEXT_X - 14;
+    let title = String(sp.title || '');
+    if (sp.drill) {
+      // 展开卡：标题放不下一行时，尾部括号说明挪到摘要
+      const m = title.match(/^(.{2,}?)\s*[（(]([^()（）]{3,})[)）]\s*$/);
+      if (m && measure(title, 16, 700) > tw) { title = m[1].trim(); n.aside = m[2].trim(); }
     }
-    else if (measure(title, 18, 700) <= K.TEXT_W) titleLines = [title];
-    else if (measure(title, 16, 700) <= K.TEXT_W) { size = 16; titleLines = [title]; }
-    else { size = 16; titleLines = wrap(title, K.TEXT_W, 16, 700, 2); }
+    let size = 18, titleLines;
+    if (kind === 'ref' && title.split(' + ').every(p => /^[\w.@~/-]+\.\w{1,5}$/.test(p) || p.endsWith('/'))) {
+      // 文件名不折行：先缩字号，再收短前缀
+      size = [18, 16, 14.5, 13.5].find(s => measure(title, s, 700) <= tw) || 13.5;
+      titleLines = [shortFile(title, tw, size)];
+    }
+    else if (measure(title, 18, 700) <= tw) titleLines = [title];
+    else if (measure(title, 16, 700) <= tw) { size = 16; titleLines = [title]; }
+    else { size = 16; titleLines = wrap(title, tw, 16, 700, 2); }
     n.titleLines = titleLines; n.titleSize = size;
+    if (sp.drill) {
+      // 摘要折成两行；紧凑卡或有读取标记时只留一行，标题折行时紧凑卡不放摘要
+      const room = n.compact ? (titleLines.length > 1 ? 0 : 1) : opt.reader ? 1 : 2;
+      n.sumLines = room ? wrap(n.aside || linesText(sp).replace(/\n/g, ' · '), tw, 12.5, 400, room) : [];
+    }
     const lastW = measure(titleLines[titleLines.length - 1], size, 700);
     const tagW = n.tag ? measure(n.tag, 10.5, 500, MONO) + 12 : 0;
-    n.tagInline = !!n.tag && titleLines.length === 1 && lastW + 8 + tagW <= K.TEXT_W + 6;
+    n.tagInline = !!n.tag && titleLines.length === 1 && lastW + 8 + tagW <= tw + 6;
     n.tagBelow = !!n.tag && !n.tagInline && kind === 'trigger';
-    const maxBody = kind === 'trigger' ? (n.tagBelow ? 2 : 3) : (titleLines.length > 1 ? 2 : 2);
+    // 矮卡片只放得下一行说明，标题折行时不放
+    const maxBody = kind === 'trigger' ? (n.tagBelow ? 2 : 3) : n.compact ? (titleLines.length > 1 ? 0 : 1) : 2;
     const raw = linesText(sp);
     const parts = raw.split('\n').filter(Boolean);
     let body = [];
-    if (parts.length > 1) {
+    if (!maxBody) body = [];
+    else if (parts.length > 1) {
       for (const p of parts) {
         if (body.length >= maxBody) break;
-        body.push(...wrap(p, K.TEXT_W, 14, 400, 1));
+        body.push(...wrap(p, tw, 14, 400, 1));
       }
-      if (parts.length > maxBody && body.length) body[body.length - 1] = fit(body[body.length - 1] + ' …', K.TEXT_W, 14, 400);
-    } else body = wrap(raw, K.TEXT_W, 14, 400, maxBody);
+      if (parts.length > maxBody && body.length) body[body.length - 1] = fit(body[body.length - 1] + ' …', tw, 14, 400);
+    } else body = wrap(raw, tw, 14, 400, maxBody);
     n.body = body;
     return n;
   }
@@ -169,6 +197,7 @@ SV.mod.layout = function (SV) {
       G.nodes[n.id] = n;
     };
 
+    const readTargets = new Set((spec.reads || []).map(r => r.to));
     if (spec.trigger) {
       const n = prepNode(spec.trigger, 'trigger');
       const row = { g: rows.length, lane: -1, r: 0, top: y, bottom: y + n.h, nodes: [n], dir: 1, hasStub: false, laneFirst: true };
@@ -186,26 +215,34 @@ SV.mod.layout = function (SV) {
       L.titleW = measure(L.titleText, 20, 700);
       L.tagText = L.tag ? fit(L.tag, Math.max(0, L.w - L.titleW - 70), 14.5, 400) : '';
       const nodes = lane.nodes || [];
+      // 总览里带可展开卡的参考资料条：全部用矮卡片；超过一行时每行多放一张，卡片相应收窄
+      const compact = L.kind === 'ref' && nodes.some(n => n.drill);
+      const perRow = compact && cols >= 4 && nodes.length > cols ? cols + 1 : cols;
+      const inner = cols * K.CARD_W + (cols - 1) * K.GAP;
+      const cardW = perRow > cols ? Math.floor((inner - (perRow - 1) * 24) / perRow) : K.CARD_W;
+      const cardGap = perRow > cols ? (inner - perRow * cardW) / (perRow - 1) : K.GAP;
+      const slotX = c => perRow > cols ? K.LANE_X + K.PAD + c * (cardW + cardGap) : colX(c);
+      const rowH = compact ? K.REF_H : K.CARD_H;
       const chunks = [];
-      for (let i = 0; i < nodes.length; i += cols) chunks.push(nodes.slice(i, i + cols));
+      for (let i = 0; i < nodes.length; i += perRow) chunks.push(nodes.slice(i, i + perRow));
       const chained = L.kind === 'flow' || L.kind === 'bare';
       let dir = 1;
       if (chained && prevCol != null && chunks.length) dir = Math.abs(prevCol - (cols - 1)) < Math.abs(prevCol) ? -1 : 1;
       let cursor = y + (L.kind === 'bare' ? 0 : K.HEADER);
       chunks.forEach((chunk, r) => {
         const rowDir = chained ? (r % 2 === 0 ? dir : -dir) : 1;
-        const row = { g: rows.length, lane: li, r, top: cursor, bottom: cursor + K.CARD_H, nodes: [], dir: rowDir, hasStub: false, laneFirst: r === 0 };
+        const row = { g: rows.length, lane: li, r, top: cursor, bottom: cursor + rowH, nodes: [], dir: rowDir, hasStub: false, laneFirst: r === 0 };
         chunk.forEach((sp, i) => {
-          const n = prepNode(sp, L.kind === 'ref' ? 'ref' : 'node', hasReads);
+          const n = prepNode(sp, L.kind === 'ref' ? 'ref' : 'node', { w: cardW, h: rowH, compact, reader: readTargets.has(sp.id) });
           const col = rowDir === 1 ? i : cols - 1 - i;
-          place(n, colX(col), cursor, col, row);
+          place(n, slotX(col), cursor, col, row);
           n.lane = li; n.laneKind = L.kind; n.color = L.color;
           row.nodes.push(n);
           if (stubFrom[n.id]) row.hasStub = true;
         });
         rows.push(row);
         L.rows.push(row);
-        cursor += K.CARD_H + (row.hasStub ? K.STUB_EXT : 0);
+        cursor += rowH + (row.hasStub ? K.STUB_EXT : 0);
         if (r < chunks.length - 1) cursor += K.ROW_GAP;
       });
       if (!chunks.length) cursor = y + 64;
@@ -389,7 +426,7 @@ SV.mod.layout = function (SV) {
     };
     (spec.edges || []).map((e, i) => ({ e, i, r: rank(e) })).sort((a, b) => a.r - b.r || a.i - b.i).forEach(({ e, i }) => {
       const s = G.nodes[e.from], t = G.nodes[e.to];
-      if (!s || !t) { G.warnings.push(`连线 ${e.from} → ${e.to} 找不到节点`); return; }
+      if (!s || !t) { G.warnings.push(SV.i18n.t('warn.edgeNoNode', e.from, e.to)); return; }
       const r = route(e, s, t);
       const edge = { id: 'e' + i, from: e.from, to: e.to, kind: e.kind || 'flow', label: e.label || '', pts: dedupe(r.pts) };
       edge.d = roundedPath(edge.pts, 10);

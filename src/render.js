@@ -171,13 +171,9 @@ SV.mod.render = function (SV) {
       out.push(`<circle cx="${cx}" cy="36.2" r="5.8" fill="rgba(0,0,0,0.28)"/><circle cx="${cx}" cy="34" r="5.8" fill="${c}" stroke="rgba(0,0,0,0.25)" stroke-width="1.2"/><circle cx="${f1(cx - 1.8)}" cy="32.2" r="1.6" fill="#ffffff" opacity="0.72"/>`);
     });
     const zh = SV.i18n.lang === 'zh';
-    const winText = zh ? String(G.header.window || '')
-      .replace(/^skills\s*\/\s*/i, '技能库 / ')
-      .replace(/\s*\/\s*SKILL\.md$/i, ' / 技能文档')
-      .replace(/\bskilllens\b/gi, '技能图解')
-      .replace(/\breview-loop\b/gi, '代码审查循环')
-      .replace(/\bfaceless-explainer\b/gi, '无出镜讲解视频') : G.header.window;
-    out.push(txt(hx + 62, 38.5, winText, `font-family='${zh ? G.FONT : G.MONO}' font-size="12.5" font-weight="600" fill="${P.path}" letter-spacing="0.2"`));
+    // 页眉的路径是真实路径，任何语言都原样、等宽显示（布局里也是按等宽量的）
+    const winText = G.header.window;
+    out.push(txt(hx + 62, 38.5, winText, `font-family='${G.MONO}' font-size="12.5" font-weight="600" fill="${P.path}" letter-spacing="0.2"`));
     out.push(txt(hx, 96, G.header.titleText, `class="sv-header-title" font-size="40" font-weight="800" letter-spacing="${/[㐀-鿿]/.test(G.header.titleText) ? 0 : -1}" fill="${P.text}"`));
     out.push(`<rect class="sv-title-bar" x="${hx}" y="107" width="56" height="4" rx="2" fill="${accent(P)}"/>`);
     if (G.header.subText) out.push(txt(hx, 134, G.header.subText, `class="sv-header-sub" font-size="17" font-weight="500" fill="${P.text2}"`));
@@ -304,10 +300,10 @@ SV.mod.render = function (SV) {
       const kickAttrs = `x="${f1(tx)}" y="${f1(cy - (big ? 38 : 34))}" font-family='${zh ? G.FONT : G.MONO}' font-size="${zh ? 13 : 12}" font-weight="${zh ? 700 : 500}" letter-spacing="${zh ? 1 : 1.6}" fill="${accent(P)}"`;
       const tour = buildTour(G), first = tour && tour.segs[0], n = first && G.nodes[first.id];
       const title = n ? SV.layoutUtil.fit(n.spec.title, h.x + h.w - tx - 10 - SV.layoutUtil.measure('→ ', big ? 30 : 25, 800), big ? 30 : 25, 800) : '';
-      out.push(`<text class="sv-hero-kicker" ${kickAttrs}>${first ? esc(SV.i18n.t('hero.kicker', '01', String(first.total).padStart(2, '0'))) : ''}</text><text class="sv-hero-kicker-old" ${kickAttrs} opacity="0"></text>`);
+      out.push(`<text class="sv-hero-kicker" ${kickAttrs}>${first ? esc(kickerOf(tour, first)) : ''}</text><text class="sv-hero-kicker-old" ${kickAttrs} opacity="0"></text>`);
       out.push(`<text class="sv-hero-title-old" ${titleAttrs} opacity="0"></text><text class="sv-hero-prefix" ${titleAttrs} opacity="0">→ </text><text class="sv-hero-title" ${titleAttrs} letter-spacing="${spacing(title)}">${esc(title)}</text>`);
       const lane = n && n.lane >= 0 ? G.lanes[n.lane] : null;
-      out.push(`<text class="sv-hero-sub" x="${f1(tx)}" y="${f1(cy + (big ? 20 : 16))}" font-size="${big ? 16 : 14.5}" font-weight="600" fill="${P.text2}">${esc(lane ? lane.title : first ? SV.i18n.t('hero.start') : '')}</text>`);
+      out.push(`<text class="sv-hero-sub" x="${f1(tx)}" y="${f1(cy + (big ? 20 : 16))}" font-size="${big ? 16 : 14.5}" font-weight="600" fill="${P.text2}">${esc(lane ? lane.title : '')}</text>`);
       out.push(`<g class="sv-hero-dots" transform="translate(${f1(tx + 5)},${f1(cy + (big ? 42 : 36))})">`);
       // 每种路线长度只生成一次，切段仅修改属性
       const totals = tour ? [...new Set(tour.segs.map(s => s.total))] : [];
@@ -329,13 +325,26 @@ SV.mod.render = function (SV) {
     out.push('<g class="sv-nodes">');
     const allNodes = Object.values(G.nodes);
     const trigColor = (G.lanes.find(l => l.kind === 'flow' || l.kind === 'bare') || {}).color || 'green';
+    // 主流程里可展开的卡片占多数时（≥ 3 张且 ≥ 60%），入口收成一个小圆钮，别让十张卡片各挂一个「查看」
+    const isMain = n => ['flow', 'bare'].includes(n.laneKind);
+    const mainNodes = allNodes.filter(isMain), mainDrill = mainNodes.filter(n => n.spec.drill);
+    const dense = mainDrill.length >= 3 && mainDrill.length >= mainNodes.length * 0.6;
+    // 悬停抬起用 CSS 过渡，只动外层包裹，不碰播放器写的属性；样式每张图只放一份
+    if (allNodes.some(n => n.spec.drill)) out.push('<style>.sv-drill-surface{transition:transform .16s ease-out}.sv-drill:hover .sv-drill-surface,.sv-drill:focus .sv-drill-surface{transform:translate(-2px,-5px)}</style>');
     for (const n of allNodes) {
       const c = pal(n.type === 'trigger' ? trigColor : n.color);
       const act = P.active;
+      let gate = n.x + n.w, readX = n.x + 75; // 底行右侧入口的左边界（读取标记别越过它）、读取标记的起点
       const numStr = nodeNo[n.id] && ['flow', 'bare'].includes(n.laneKind) ? String(nodeNo[n.id]).padStart(2, '0') : '';
-      out.push(`<g class="sv-node" data-node="${esc(n.id)}" style="cursor:pointer">`);
+      const drill = n.spec.drill;
+      out.push(`<g class="sv-node${drill ? ' sv-drill' : ''}" data-node="${esc(n.id)}"${drill ? ` tabindex="0" role="button" aria-label="${esc(n.spec.title + ' · ' + SV.i18n.t('hier.open'))}"` : ''} style="cursor:pointer">`);
       const tip = [n.spec.title, Array.isArray(n.spec.lines) ? n.spec.lines.join(' / ') : n.spec.lines].filter(Boolean).join(' — ');
       if (tip) out.push(`<title>${esc(tip)}</title>`);
+      if (drill) {
+        // 叠层底板：深色主题用更深的立面色，卡片与底板才分得开；矮卡片（参考资料条）不叠
+        if (!n.compact) out.push(`<rect class="sv-stack" x="${f1(n.x + 9)}" y="${f1(n.y + 9)}" width="${n.w}" height="${n.h}" rx="${P.rCard}" fill="${P.shadow ? c.icon : c.slab}" stroke="${c.accent}" stroke-width="1.8"/>`);
+        out.push('<g class="sv-drill-surface">');
+      }
       out.push(depth(n, P, c));
       out.push(shape(n, P, `class="sv-ripple" fill="none" stroke="${act}" stroke-width="1.4" opacity="0"`, -5));
       out.push('<g class="sv-face">');
@@ -356,9 +365,9 @@ SV.mod.render = function (SV) {
         const rc = P.rCard;
         const faceCy = n.cy - 2.5;
         out.push(`<rect class="sv-shape" x="${f1(n.x)}" y="${f1(n.y)}" width="${n.w}" height="${n.h}" rx="${rc}" fill="${c.card}" stroke="${c.cardStroke}" stroke-width="2.2"${dash}/>`, blockBevel(n, P, c, 6.5), highlight(n, P), activeFace(n, P));
-        if (numStr && !BP) out.push(`<path d="${pillPath(n.x + n.w - 29, n.y + n.h - 24, 23, 15, 6)}" fill="${c.icon}" stroke="${c.accent}" stroke-opacity="0.45" stroke-width="1.2"/>`);
-        if (BP && nodeNo[n.id] || !BP && reads.length && ['flow', 'bare'].includes(n.laneKind)) out.push(txt(n.x + n.w - 9, n.y + n.h - 11, String(nodeNo[n.id]).padStart(2, '0'), `text-anchor="end" font-family='${G.MONO}' font-size="10" font-weight="700" fill="${BP ? P.text3 : P.text2}"${BP ? '' : ' opacity="0.75" data-card-no="' + esc(n.id) + '"'}`));
-        else if (numStr && !BP) out.push(txt(n.x + n.w - 17.5, n.y + n.h - 12.5, numStr, `text-anchor="middle" font-family='${G.MONO}' font-size="10" font-weight="800" fill="${c.accent}"`));
+        if (!drill && numStr && !BP) out.push(`<path d="${pillPath(n.x + n.w - 29, n.y + n.h - 24, 23, 15, 6)}" fill="${c.icon}" stroke="${c.accent}" stroke-opacity="0.45" stroke-width="1.2"/>`);
+        if (!drill && (BP && nodeNo[n.id] || !BP && reads.length && ['flow', 'bare'].includes(n.laneKind))) out.push(txt(n.x + n.w - 9, n.y + n.h - 11, String(nodeNo[n.id]).padStart(2, '0'), `text-anchor="end" font-family='${G.MONO}' font-size="10" font-weight="700" fill="${BP ? P.text3 : P.text2}"${BP ? '' : ' opacity="0.75" data-card-no="' + esc(n.id) + '"'}`));
+        else if (!drill && numStr && !BP) out.push(txt(n.x + n.w - 17.5, n.y + n.h - 12.5, numStr, `text-anchor="middle" font-family='${G.MONO}' font-size="10" font-weight="800" fill="${c.accent}"`));
         const ib = 50, ix = n.x + 13, iy = faceCy - ib / 2, ir = Math.min(13, P.rCard - 2);
         if (n.terminal) {
           out.push(`<rect x="${f1(ix)}" y="${f1(iy)}" width="${ib}" height="${ib}" rx="${ir}" fill="${c.accent}" stroke="${c.stroke}" stroke-width="1.8"/>`);
@@ -373,20 +382,52 @@ SV.mod.render = function (SV) {
           out.push(icon(n.icon || 'circle-dot', ix + 11, iy + 9.5, 28, c.accent, 2.2));
         }
         const tx = n.x + K.TEXT_X;
-        const tl = n.titleLines.length;
-        const showTag = n.type === 'trigger' && !isRedundantTag(n.tag, n.titleLines[0]);
-        const titleH = tl * 22, tagH = showTag && n.tagBelow ? 17 : 0, bodyH = n.body.length * 20;
-        const blockH = titleH + tagH + (n.body.length ? 6 : 0) + bodyH;
-        const top = faceCy - blockH / 2;
-        n.titleLines.forEach((l, i) => out.push(txt(tx, top + 16 + i * 22, l, `font-size="${n.titleSize}" font-weight="800" fill="${P.text}"`)));
-        const pill = (x, y) => {
-          const tw = SV.layoutUtil.measure(n.tag, 10.5, 500, zh ? G.FONT : G.MONO);
-          out.push(`<rect x="${f1(x)}" y="${f1(y - 11.5)}" width="${f1(tw + 12)}" height="16" rx="6" fill="${P.tagBg}" stroke="${c.accent}" stroke-opacity="0.32"/>`);
-          out.push(txt(x + 6, y, n.tag, `font-family='${zh ? G.FONT : G.MONO}' font-size="10.5" font-weight="700" fill="${P.tagText}"`));
-        };
-        if (showTag && n.tagInline) pill(tx + SV.layoutUtil.measure(n.titleLines[0], n.titleSize, 700) + 8, top + 15);
-        else if (showTag && n.tagBelow) pill(tx, top + titleH + 12);
-        n.body.forEach((l, i) => out.push(txt(tx, top + titleH + tagH + 6 + 15 + i * 20, l, `font-size="13.5" font-weight="500" fill="${P.text2}"`)));
+        if (drill) {
+          // 展开卡片：标题、两行摘要，底行从左到右是编号、徽标、入口（文字按钮或小圆钮）
+          const top = n.y + 25, yc = n.y + n.h - 22.5;
+          n.titleLines.forEach((l, i) => out.push(txt(tx, top + i * 21, l, `font-size="${n.titleSize}" font-weight="800" fill="${P.text}"`)));
+          const sumTop = top + (n.titleLines.length - 1) * 21 + (n.compact ? 21 : 24);
+          n.sumLines.forEach((l, i) => out.push(txt(tx, sumTop + i * 16, l, `font-size="12.5" fill="${P.text2}"`)));
+          if (n.compact || dense) {
+            const cx = n.x + n.w - 20;
+            out.push(`<circle cx="${f1(cx)}" cy="${f1(yc)}" r="12" fill="${c.accent}"/><path d="M${f1(cx - 2.4)} ${f1(yc - 4.8)}L${f1(cx + 2.6)} ${f1(yc)}L${f1(cx - 2.4)} ${f1(yc + 4.8)}" fill="none" stroke="${P.termIcon}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`);
+            gate = cx - 12;
+          } else {
+            const label = SV.i18n.t('hier.open'), w = SV.layoutUtil.measure(label, 12.5, 700) + 20;
+            const x = n.x + n.w - w - 8;
+            out.push(`<rect x="${f1(x)}" y="${f1(yc - 13.5)}" width="${f1(w)}" height="27" rx="9" fill="${c.accent}"/>`);
+            out.push(txt(x + w / 2, yc + 4.5, label, `text-anchor="middle" font-size="12.5" font-weight="700" fill="${P.termIcon}"`));
+            gate = x;
+          }
+          if (numStr) {
+            if (BP) out.push(txt(n.x + 13, yc + 3.5, numStr, `font-family='${G.MONO}' font-size="10" font-weight="700" fill="${P.text3}"`));
+            else {
+              out.push(`<path d="${pillPath(n.x + 13, yc - 7.5, 23, 15, 6)}" fill="${c.icon}" stroke="${c.accent}" stroke-opacity="0.45" stroke-width="1.2"/>`);
+              out.push(txt(n.x + 24.5, yc + 3.5, numStr, `text-anchor="middle" font-family='${G.MONO}' font-size="10" font-weight="800" fill="${c.accent}"`));
+            }
+          }
+          // 矮卡片的图标占满左侧，徽标挪到文字栏底行
+          const tagX = n.compact ? tx : n.x + (numStr ? 42 : 13);
+          const tag = SV.layoutUtil.fit(n.tag, Math.max(0, gate - tagX - 8), 12, 700);
+          out.push(txt(tagX, yc + 4.3, tag, `font-size="12" font-weight="700" fill="${P.tagText}"`));
+          readX = Math.max(readX, tagX + SV.layoutUtil.measure(tag, 12, 700) + 10);
+        } else {
+          const tl = n.titleLines.length;
+          const showTag = n.type === 'trigger' && !isRedundantTag(n.tag, n.titleLines[0]);
+          const titleH = tl * 22, tagH = showTag && n.tagBelow ? 17 : 0, bodyH = n.body.length * 20;
+          const blockH = titleH + tagH + (n.body.length ? 6 : 0) + bodyH;
+          // 参考资料条里的矮卡片：标题行与展开卡对齐
+          const top = n.compact ? n.y + 9 : faceCy - blockH / 2;
+          n.titleLines.forEach((l, i) => out.push(txt(tx, top + 16 + i * 22, l, `font-size="${n.titleSize}" font-weight="800" fill="${P.text}"`)));
+          const pill = (x, y) => {
+            const tw = SV.layoutUtil.measure(n.tag, 10.5, 500, zh ? G.FONT : G.MONO);
+            out.push(`<rect x="${f1(x)}" y="${f1(y - 11.5)}" width="${f1(tw + 12)}" height="16" rx="6" fill="${P.tagBg}" stroke="${c.accent}" stroke-opacity="0.32"/>`);
+            out.push(txt(x + 6, y, n.tag, `font-family='${zh ? G.FONT : G.MONO}' font-size="10.5" font-weight="700" fill="${P.tagText}"`));
+          };
+          if (showTag && n.tagInline) pill(tx + SV.layoutUtil.measure(n.titleLines[0], n.titleSize, 700) + 8, top + 15);
+          else if (showTag && n.tagBelow) pill(tx, top + titleH + 12);
+          n.body.forEach((l, i) => out.push(txt(tx, top + titleH + tagH + (n.compact ? 16 : 21) + i * 20, l, `font-size="13.5" font-weight="500" fill="${P.text2}"`)));
+        }
       }
       // 阅读目标使用内描边和轻洗色，独立于步骤的描边光晕
       const readShape = (attrs, inset) => n.type === 'decision'
@@ -396,17 +437,25 @@ SV.mod.render = function (SV) {
       if (reads.some(r => r.from === n.id)) out.push(readShape(`class="sv-reader-ring" fill="none" stroke="${P.reads}" stroke-width="1.4" opacity="0"`, -2));
       if (reads.length && n.type === 'decision' && ['flow', 'bare'].includes(n.laneKind)) out.push(txt(n.x + n.w - 9, n.y + n.h - 11, String(nodeNo[n.id]).padStart(2, '0'), `text-anchor="end" font-family='${G.MONO}' font-size="10" fill="${BP ? P.text3 : P.text2}" opacity="${BP ? 0.6 : 0.75}" data-card-no="${esc(n.id)}"`));
       if (n.laneKind === 'ref' && readers[n.id]) {
-        const ids = readers[n.id].slice().sort((a, b) => nodeNo[a] - nodeNo[b]), shown = ids.slice(0, 3);
-        const suffix = ids.length > 3 ? ' +' + (ids.length - 3) : '';
-        const label = '← ' + shown.map(id => String(nodeNo[id]).padStart(2, '0')).join('·') + suffix;
-        const x = n.x + 75, y = n.y + n.h - 14, w = SV.layoutUtil.measure(label, 10.5, 500, G.MONO) + 12;
+        const ids = readers[n.id].slice().sort((a, b) => nodeNo[a] - nodeNo[b]);
+        const x = drill ? readX : n.x + 75, y = drill ? n.y + n.h - 18.2 : n.y + n.h - 14;
+        // 展开卡的底行右侧有入口，读取标记放不下时少列几个编号
+        let take = Math.min(3, ids.length), shown, suffix, label, w;
+        for (;;) {
+          shown = ids.slice(0, take);
+          suffix = ids.length > take ? ' +' + (ids.length - take) : '';
+          label = '← ' + shown.map(id => String(nodeNo[id]).padStart(2, '0')).join('·') + suffix;
+          w = SV.layoutUtil.measure(label, 10.5, 500, G.MONO) + 12;
+          if (!drill || take <= 1 || x + w <= gate - 6) break;
+          take--;
+        }
         const box = fill => `<rect x="${f1(x)}" y="${f1(y - 11.5)}" width="${f1(w)}" height="16" rx="5" ${fill}/>`;
         const spans = shown.map((id, i) => `${i ? '·' : ''}<tspan data-reader="${esc(id)}" font-weight="500">${String(nodeNo[id]).padStart(2, '0')}</tspan>`).join('');
         const attrs = `font-family='${G.MONO}' font-size="10.5" font-weight="500"`;
         out.push(`<g class="sv-read-chip">${box(`fill="${P.tagBg}"`)}${txt(x + 6, y, label, `${attrs} fill="${P.tagText}"`)}</g>`);
         out.push(`<g class="sv-read-chip-lit" opacity="0">${box(`fill="${P.reads}" opacity="0.16"`)}<text x="${f1(x + 6)}" y="${f1(y)}" ${attrs} fill="${P.reads}">← ${spans}${suffix}</text></g>`);
       }
-      out.push('</g></g>');
+      out.push(drill ? '</g></g></g>' : '</g></g>');
     }
     out.push('</g>');
 
@@ -510,7 +559,15 @@ SV.mod.render = function (SV) {
       segs.push({ type: 'pause', t0: t, t1: t + PAUSE, round: ri, idx, total: nodeSteps.length });
       t += PAUSE;
     });
-    return { segs, duration: t, rounds: rounds.length };
+    // skip = 1：路线从触发点出发，编号里不算它，这样与卡片上的 01、02… 对得上
+    return { segs, duration: t, rounds: rounds.length, skip: G.trigger && start === G.trigger.id ? 1 : 0 };
+  }
+
+  // 主角区角标：触发点标「起点」，其余是第几步 / 共几步（与卡片编号一致）
+  function kickerOf(tour, seg) {
+    const pad = v => String(Math.max(1, v)).padStart(2, '0');
+    if (tour.skip && seg.type === 'node' && seg.idx === 0) return SV.i18n.t('hero.kickerStart');
+    return SV.i18n.t('hero.kicker', pad(Math.min(seg.idx + 1, seg.total) - tour.skip), pad(seg.total - tour.skip));
   }
 
   /* 折线上按长度取点（忽略圆角，误差 < 3px） */
@@ -715,7 +772,7 @@ SV.mod.render = function (SV) {
         title = G.nodes[id].spec.title || '';
         sub = T((pin.step ? 'hero.pinReads' : 'hero.pinUsed') + (count === 1 ? '1' : ''), count);
       } else if (seg) {
-        kick = T('hero.kicker', String(Math.min(seg.idx + 1, seg.total)).padStart(2, '0'), String(seg.total).padStart(2, '0'));
+        kick = kickerOf(tour, seg);
         if (seg.type === 'pause') {
           title = (G.spec.hero && G.spec.hero.title) || G.spec.title || '';
           sub = (G.spec.hero && G.spec.hero.sub) || T('hero.roundEnd', seg.round + 1, tour.rounds);
@@ -724,7 +781,7 @@ SV.mod.render = function (SV) {
         } else {
           const id = seg.type === 'node' ? seg.id : seg.edge.to, n = G.nodes[id], L = laneOf(id);
           title = n.spec.title || ''; arrow = seg.type === 'edge';
-          sub = [L ? L.title : T('hero.start'), seg.round > 0 ? T('hero.branch', seg.round) : ''].filter(Boolean).join(' · ');
+          sub = [L ? L.title : '', seg.round > 0 ? T('hero.branch', seg.round) : ''].filter(Boolean).join(' · ');
         }
       }
       return { title, sub, kick, arrow };
