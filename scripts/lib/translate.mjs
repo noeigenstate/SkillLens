@@ -27,17 +27,37 @@ let tcCache = {};
 try { tcCache = JSON.parse(fs.readFileSync(TC_CACHE_FILE, 'utf8')); } catch { /* 第一次用 */ }
 const key = (lang, text) => lang + '\u0001' + text;
 
+let tempSeq = 0;
+function atomicWrite(file, text) {
+  const tmp = `${file}.${process.pid}.${++tempSeq}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* 已替换 */ }
+  }
+}
+
+function mergeDisk(file, entries) {
+  try {
+    const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const [k, v] of Object.entries(disk)) if (!Object.hasOwn(entries, k)) entries[k] = v;
+  } catch { /* 首次写入 */ }
+}
+
 function saveCache() {
   fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-  fs.writeFileSync(CACHE_FILE, JSON.stringify(cache));
+  mergeDisk(CACHE_FILE, cache);
+  atomicWrite(CACHE_FILE, JSON.stringify(cache));
   // 直接双击 index.html 时也能用上已有的译文
-  fs.writeFileSync(CACHE_JS, '/* 由翻译功能生成，不要手改 */\nwindow.SV_TRANS = ' + JSON.stringify(cache).replace(/</g, '\\u003c') + ';\n');
+  atomicWrite(CACHE_JS, '/* 由翻译功能生成，不要手改 */\nwindow.SV_TRANS = ' + JSON.stringify(cache).replace(/</g, '\\u003c') + ';\n');
 }
 
 export function saveTcCache() {
   fs.mkdirSync(path.dirname(TC_CACHE_FILE), { recursive: true });
-  fs.writeFileSync(TC_CACHE_FILE, JSON.stringify(tcCache, null, 2));
-  fs.writeFileSync(TC_CACHE_JS, '/* 由测试用例生成功能生成，不要手改 */\nwindow.SV_TESTCASES = ' + JSON.stringify(tcCache).replace(/</g, '\\u003c') + ';\n');
+  mergeDisk(TC_CACHE_FILE, tcCache);
+  atomicWrite(TC_CACHE_FILE, JSON.stringify(tcCache, null, 2));
+  atomicWrite(TC_CACHE_JS, '/* 由测试用例生成功能生成，不要手改 */\nwindow.SV_TESTCASES = ' + JSON.stringify(tcCache).replace(/</g, '\\u003c') + ';\n');
 }
 
 export function getOllamaConfig() {
@@ -55,8 +75,16 @@ export function getOllamaConfig() {
 }
 
 /* 直连 HTTP/HTTPS 请求（等效于 curl --noproxy '*'，不受系统代理干扰） */
-function directJsonRequest(urlStr, { method = 'GET', body = null, timeoutMs = 60000, apiKey = 'local' } = {}) {
+export function directJsonRequest(urlStr, { method = 'GET', body = null, timeoutMs = 60000, apiKey = 'local', signal } = {}) {
   return new Promise((resolve, reject) => {
+    let timer, settled = false;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err); else resolve(value);
+    };
+    const disconnected = () => finish(Object.assign(new Error('模型连接中断'), { backendUnreachable: true }));
     const u = new URL(urlStr);
     const lib = u.protocol === 'https:' ? https : http;
     const payload = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : null;
@@ -68,22 +96,30 @@ function directJsonRequest(urlStr, { method = 'GET', body = null, timeoutMs = 60
       headers['Content-Type'] = 'application/json';
       headers['Content-Length'] = Buffer.byteLength(payload);
     }
-    const req = lib.request(u, { method, headers, agent: false }, res => {
+    const req = lib.request(u, { method, headers, agent: false, signal }, res => {
       let out = '';
       res.setEncoding('utf8');
       res.on('data', d => { out += d; });
       res.on('end', () => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP ${res.statusCode}: ${out.slice(0, 240)}`));
+          return finish(new Error(`模型请求失败：HTTP ${res.statusCode}`));
         }
-        try { resolve(JSON.parse(out)); }
-        catch (e) { reject(new Error(`JSON 解析失败: ${out.slice(0, 200)}`)); }
+        try { finish(null, JSON.parse(out)); }
+        catch { finish(new Error('模型返回无效 JSON')); }
       });
+      res.on('error', disconnected);
+      res.on('aborted', disconnected);
+      res.on('close', () => { if (!res.complete) disconnected(); });
     });
-    req.setTimeout(timeoutMs, () => {
-      req.destroy(new Error(`请求超时 (${timeoutMs}ms)`));
+    timer = setTimeout(() => {
+      const err = Object.assign(new Error(`请求超时 (${timeoutMs}ms)`), { backendUnreachable: true });
+      finish(err);
+      req.destroy(err);
+    }, timeoutMs);
+    req.on('error', err => {
+      if (err.name !== 'AbortError') err.backendUnreachable = true;
+      finish(err);
     });
-    req.on('error', reject);
     if (payload) req.write(payload);
     req.end();
   });
@@ -128,8 +164,9 @@ function extractJsonAny(rawText) {
 
 /* —— 后端零：局域网 Qwen (OpenAI 兼容 /v1/chat/completions) —— */
 let resolvedOllama = undefined;
+let probedAt = 0;
 export async function probeOllama(force = false) {
-  if (resolvedOllama !== undefined && !force) return resolvedOllama;
+  if (!force && (resolvedOllama || (resolvedOllama === null && Date.now() - probedAt < 30000))) return resolvedOllama;
   const cfg = getOllamaConfig();
   const chatUrl = cfg.baseUrl.endsWith('/v1')
     ? `${cfg.baseUrl}/chat/completions`
@@ -149,22 +186,22 @@ export async function probeOllama(force = false) {
     if (j && j.choices) {
       return (resolvedOllama = { url: cfg.baseUrl, chatUrl, model: cfg.model, apiKey: cfg.apiKey });
     }
-  } catch {
-    if (resolvedOllama) return resolvedOllama;
-  }
+  } catch { /* 稍后重试 */ }
+  probedAt = Date.now();
   return (resolvedOllama = null);
 }
 
-async function viaLocalLlm(llm, target, items, markdown) {
+async function viaLocalLlm(llm, target, items, markdown, signal) {
   const j = await directJsonRequest(llm.chatUrl, {
     method: 'POST',
     apiKey: llm.apiKey,
     timeoutMs: 90000,
+    signal,
     body: {
       model: llm.model,
       messages: [
-        { role: 'system', content: systemPrompt(target, markdown) },
-        { role: 'user', content: JSON.stringify(items) },
+        { role: 'system', content: systemPrompt(target, markdown, true) },
+        { role: 'user', content: JSON.stringify(Object.fromEntries(items.map((s, i) => [String(i + 1), s]))) },
       ],
       chat_template_kwargs: { enable_thinking: false },
       temperature: 0.1,
@@ -173,20 +210,25 @@ async function viaLocalLlm(llm, target, items, markdown) {
   });
   const content = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
   const parsed = extractJsonAny(content);
-  let list = null;
-  if (Array.isArray(parsed)) {
-    list = parsed;
-  } else if (parsed && Array.isArray(parsed.translations)) {
-    list = parsed.translations;
-  } else if (parsed && typeof parsed === 'object') {
-    const vals = Object.values(parsed);
-    if (vals.length && vals.every(v => typeof v === 'string')) list = vals;
+  const values = parsed && Object.hasOwn(parsed, 'translations') ? parsed.translations : parsed;
+  const separator = target === 'zh' ? '；' : '; ';
+  if (Array.isArray(values)) {
+    if (values.length === items.length) return values;
+    if (items.length === 1 && values.every(v => typeof v === 'string')) return [values.join(separator)];
+    throw new Error('译文数量与输入不符');
   }
-  if (!Array.isArray(list)) throw new Error('模型返回缺少 translations 译文数组');
-  return list;
+  if (!values || typeof values !== 'object') throw new Error('模型返回缺少 translations 译文对象');
+  // 按编号对齐，缺项留给单条重试
+  return items.map((s, i) => {
+    const id = String(i + 1);
+    const value = Object.hasOwn(values, id) ? values[id] : null;
+    if (value === null || typeof value === 'string') return value;
+    if (Array.isArray(value) && value.every(v => typeof v === 'string')) return value.join(separator);
+    throw new Error('模型返回无效译文');
+  });
 }
 
-function systemPrompt(target, markdown) {
+function systemPrompt(target, markdown, keyed = false) {
   return [
     'You translate text shown by a tool that draws workflow diagrams of AI agent skills (SKILL.md files).',
     `Translate every string the user sends into ${LANG_NAME[target]}.`,
@@ -195,7 +237,9 @@ function systemPrompt(target, markdown) {
       ? 'Each string is Markdown: keep its structure (headings, lists, tables, links, code blocks) and translate only the prose; never change the inside of code blocks or inline code.'
       : 'The strings are short labels on diagram cards: keep each translation about as short as the original and add no explanations.',
     `If a string is already in ${LANG_NAME[target]}, return it unchanged.`,
-    'Output ONLY a valid JSON object {"translations": [...]} with exactly one translation per input string, in the same order. Do not wrap in markdown fences.',
+    keyed
+      ? 'Input is a JSON object mapping ids to strings. Output ONLY a JSON object {"translations": {"<id>": "<translation>", ...}} with exactly the same ids. Translate each string as ONE string; never split it into several. Do not wrap in markdown fences.'
+      : 'Output ONLY a valid JSON object {"translations": [...]} with exactly one translation per input string, in the same order. Do not wrap in markdown fences.',
   ].join('\n');
 }
 
@@ -203,7 +247,7 @@ function systemPrompt(target, markdown) {
 async function loadSdk() {
   try { return (await import('@anthropic-ai/sdk')).default; } catch { return null; }
 }
-async function viaSdk(Anthropic, target, items, markdown) {
+async function viaSdk(Anthropic, target, items, markdown, signal) {
   const client = new Anthropic();
   const response = await client.beta.messages.create({
     model: process.env.SV_TRANSLATE_MODEL || 'claude-opus-5-5',
@@ -213,7 +257,7 @@ async function viaSdk(Anthropic, target, items, markdown) {
     output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
     system: systemPrompt(target, markdown),
     messages: [{ role: 'user', content: JSON.stringify(items) }],
-  });
+  }, { signal, timeout: 90000 });
   if (response.stop_reason === 'refusal') throw new Error('模型拒绝了这次翻译');
   const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
   return JSON.parse(text).translations;
@@ -233,17 +277,23 @@ export function findClaude() {
   }
   return null;
 }
-function viaCli(bin, target, items, markdown) {
+function viaCli(bin, target, items, markdown, signal) {
   return new Promise((resolve, reject) => {
     const args = ['-p', '--output-format', 'json', '--tools', '', '--effort', 'low', '--no-session-persistence', '--strict-mcp-config',
       '--system-prompt', systemPrompt(target, markdown), '--json-schema', JSON.stringify(SCHEMA)];
     if (process.env.SV_TRANSLATE_MODEL) args.push('--model', process.env.SV_TRANSLATE_MODEL);
-    const p = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const p = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, signal });
+    const timer = setTimeout(() => {
+      p.kill();
+      reject(new Error('Claude Code 请求超时 (90000ms)'));
+    }, 90000);
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });
-    p.on('error', reject);
+    p.on('error', e => { clearTimeout(timer); reject(e); });
+    p.stdin.on('error', e => { clearTimeout(timer); p.kill(); reject(e); });
     p.on('close', code => {
+      clearTimeout(timer);
       try {
         const j = JSON.parse(out);
         if (j.is_error) return reject(new Error(String(j.result || 'Claude Code 返回错误')));
@@ -257,26 +307,31 @@ function viaCli(bin, target, items, markdown) {
 
 /* —— 选后端（优先局域网 Qwen 27B） —— */
 let backend = undefined;
+let backendAt = 0;
+export function __setBackendForTest(fn) {
+  backend = fn ? { name: 'test', run: fn } : undefined;
+}
 export async function detectBackend(force = false) {
-  if (backend !== undefined && !force) return backend;
+  if (backend !== undefined && !force && (backend || Date.now() - backendAt < 30000)) return backend;
+  backendAt = Date.now();
   const mode = process.env.SV_TRANSLATE;
   if (mode === 'off') return (backend = null);
   const llm = await probeOllama(force);
   if (llm && mode !== 'sdk' && mode !== 'claude') {
-    return (backend = { name: `${llm.model} (${llm.url})`, ollama: llm, run: (t, i, m) => viaLocalLlm(llm, t, i, m) });
+    return (backend = { name: `${llm.model} (${llm.url})`, ollama: llm, run: (t, i, m, s) => viaLocalLlm(llm, t, i, m, s) });
   }
   // 如果本地或环境变量配置了大模型接口，优先使用，不降级到已超限的 Claude
   const cfg = getOllamaConfig();
   if (cfg.baseUrl && (mode === 'ollama' || (!process.env.ANTHROPIC_API_KEY && !process.env.SV_CLAUDE && !mode))) {
     const chatUrl = cfg.baseUrl.endsWith('/v1') ? `${cfg.baseUrl}/chat/completions` : `${cfg.baseUrl}/v1/chat/completions`;
     const fallbackLlm = { url: cfg.baseUrl, chatUrl, model: cfg.model, apiKey: cfg.apiKey };
-    return (backend = { name: `${fallbackLlm.model} (${fallbackLlm.url})`, ollama: fallbackLlm, run: (t, i, m) => viaLocalLlm(fallbackLlm, t, i, m) });
+    return (backend = { name: `${fallbackLlm.model} (${fallbackLlm.url})`, ollama: fallbackLlm, run: (t, i, m, s) => viaLocalLlm(fallbackLlm, t, i, m, s) });
   }
   const Anthropic = await loadSdk();
   const hasKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-  if (Anthropic && (hasKey || mode === 'sdk')) return (backend = { name: 'sdk', run: (t, i, m) => viaSdk(Anthropic, t, i, m) });
+  if (Anthropic && (hasKey || mode === 'sdk')) return (backend = { name: 'sdk', run: (t, i, m, s) => viaSdk(Anthropic, t, i, m, s) });
   const bin = mode === 'sdk' ? null : findClaude();
-  if (bin) return (backend = { name: 'claude-cli', run: (t, i, m) => viaCli(bin, t, i, m) });
+  if (bin) return (backend = { name: 'claude-cli', run: (t, i, m, s) => viaCli(bin, t, i, m, s) });
   return (backend = null);
 }
 
@@ -284,9 +339,14 @@ export async function detectBackend(force = false) {
 const hiQueue = [];
 const loQueue = [];
 let queueRunning = false;
+let requestSeq = 0;
+let foregroundAt = Date.now();
+export function markForeground() { foregroundAt = Date.now(); }
+export function msSinceForeground() { return Date.now() - foregroundAt; }
 
 function pumpQueue() {
   if (queueRunning) return;
+  hiQueue.sort((a, b) => b.seq - a.seq || a.batchIndex - b.batchIndex);
   const task = hiQueue.shift() || loQueue.shift();
   if (!task) return;
   queueRunning = true;
@@ -299,10 +359,11 @@ function pumpQueue() {
     });
 }
 
-export function enqueueLlm(fn, priority = 'high') {
+export function enqueueLlm(fn, priority = 'high', seq = ++requestSeq, batchIndex = 0) {
   return new Promise((resolve, reject) => {
-    if (priority === 'low') loQueue.push({ fn, resolve, reject });
-    else hiQueue.push({ fn, resolve, reject });
+    const task = { fn, resolve, reject, seq, batchIndex };
+    if (priority === 'low') loQueue.push(task);
+    else hiQueue.push(task);
     pumpQueue();
   });
 }
@@ -377,35 +438,138 @@ function chunks(items, markdown) {
   return out;
 }
 
-export function translate(target, items, markdown = false, priority = 'high') {
-  return enqueueLlm(() => doTranslate(target, items, markdown), priority);
+// 空行仅在围栏外分段，分隔符原样保留
+function markdownSegments(text) {
+  const parts = [];
+  const lines = [...text.matchAll(/[^\r\n]*(?:\r\n|\n|\r|$)/g)].filter(m => m[0]);
+  let start = 0, fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i][0].replace(/[\r\n]+$/, '');
+    if (!fence && /^[ \t]*$/.test(line)) {
+      let end = lines[i].index + lines[i][0].length;
+      let sep = lines[i].index;
+      if (sep > start) sep -= text.slice(0, sep).endsWith('\r\n') ? 2 : 1;
+      while (i + 1 < lines.length && /^[ \t]*$/.test(lines[i + 1][0].replace(/[\r\n]+$/, ''))) {
+        i++;
+        end = lines[i].index + lines[i][0].length;
+      }
+      if (sep > start) parts.push({ text: text.slice(start, sep) });
+      parts.push({ separator: text.slice(sep, end) });
+      start = end;
+      continue;
+    }
+    const m = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!m) continue;
+    if (!fence && (m[1][0] !== '`' || !m[2].includes('`'))) fence = m[1];
+    else if (fence && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) fence = null;
+  }
+  if (start < text.length) parts.push({ text: text.slice(start) });
+
+  const codeOnly = s => {
+    const lines = s.trim().split(/\r\n|\n|\r/);
+    const open = lines[0].match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!open || (open[1][0] === '`' && open[2].includes('`'))) return false;
+    const end = lines.findIndex((line, i) => i > 0 && new RegExp('^ {0,3}' + open[1][0] + '{' + open[1].length + ',}[ \\t]*$').test(line));
+    return end === lines.length - 1;
+  };
+  const packed = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part.separator !== undefined) { packed.push(part); continue; }
+    const code = codeOnly(part.text);
+    const prev = packed.at(-2), sep = packed.at(-1);
+    if (!code && prev?.text !== undefined && !prev.code && sep?.separator !== undefined && prev.text.length + sep.separator.length + part.text.length <= 1800) {
+      prev.text += sep.separator + part.text;
+      packed.pop();
+    } else packed.push({ ...part, code });
+  }
+  return packed;
 }
 
-async function doTranslate(target, items, markdown) {
-  if (!LANG_NAME[target]) throw new Error('不支持的语言：' + target);
+function unreachable(err) {
+  return err.backendUnreachable || /^(ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|EPIPE)$/.test(err.code || '');
+}
+
+export async function translate(target, items, markdown = false, priority = 'high', signal) {
+  if (!Object.hasOwn(LANG_NAME, target)) throw new Error('不支持的语言：' + target);
+  if (!Array.isArray(items)) throw new Error('items 必须是数组');
   const uniq = [...new Set(items.filter(s => typeof s === 'string' && s.trim()))];
-  const missing = uniq.filter(s => cache[key(target, s)] == null);
-  if (missing.length) {
-    const be = await detectBackend();
-    if (!be) throw new Error('没有可用的模型后端：请检查本地 / 局域网大模型接口连通性');
-    for (const batch of chunks(missing, markdown)) {
-      try {
-        const out = await be.run(target, batch, markdown);
-        if (Array.isArray(out)) {
-          batch.forEach((s, i) => {
-            if (typeof out[i] === 'string' && out[i].trim()) {
-              cache[key(target, s)] = out[i].trim();
-            }
-          });
-          saveCache();
+  const cached = s => typeof cache[key(target, s)] === 'string' && !!cache[key(target, s)].trim();
+  const missing = uniq.filter(s => !cached(s));
+  const seq = ++requestSeq;
+  let batchIndex = 0, attempts = 0, offline = 0, lastError;
+
+  const runBatch = async (batch, index, retried = false) => {
+    if (signal?.aborted) return null;
+    try {
+      const out = await enqueueLlm(async () => {
+        if (signal?.aborted) return null;
+        attempts++;
+        const be = await detectBackend();
+        if (signal?.aborted) return null;
+        if (!be) throw Object.assign(new Error('没有可用的模型后端'), { backendUnreachable: true });
+        return be.run(target, batch, markdown, signal);
+      }, priority, seq, index);
+      if (signal?.aborted) return null;
+      if (!Array.isArray(out) || out.length !== batch.length) throw new Error('译文数量与输入不符');
+      // 空译文单独重试，不能写入缓存
+      const result = new Map();
+      for (let i = 0; i < batch.length; i++) {
+        if (typeof out[i] === 'string' && out[i].trim()) result.set(batch[i], out[i]);
+      }
+      for (const s of batch.filter(s => !result.has(s))) {
+        if (batch.length === 1) throw new Error('模型返回空译文');
+        const one = await runBatch([s], index);
+        if (one) for (const [k, v] of one) result.set(k, v);
+      }
+      return result;
+    } catch (err) {
+      if (signal?.aborted) return null;
+      lastError = err;
+      if (unreachable(err)) offline++;
+      if (batch.length > 1) {
+        const mid = Math.ceil(batch.length / 2);
+        const left = await runBatch(batch.slice(0, mid), index);
+        const right = await runBatch(batch.slice(mid), index);
+        return new Map([...(left || []), ...(right || [])]);
+      }
+      if (!retried) return runBatch(batch, index, true);
+      console.warn(`翻译放弃 ${batch.length} 项：${err.message}`);
+      return null;
+    }
+  };
+
+  for (const batch of chunks(missing, markdown)) {
+    if (signal?.aborted) break;
+    const index = batchIndex++;
+    if (markdown && batch[0].length > 1800) {
+      const parts = markdownSegments(batch[0]);
+      let complete = true;
+      const translated = [];
+      for (const part of parts) {
+        if (signal?.aborted) { complete = false; break; }
+        if (part.separator !== undefined || part.code) {
+          translated.push(part.separator ?? part.text);
+          continue;
         }
-      } catch (err) {
-        console.warn('翻译分批调用警告（继续处理后续分批）：', err.message);
+        const result = await runBatch([part.text], index);
+        if (!result?.has(part.text)) complete = false;
+        translated.push(result?.get(part.text) ?? part.text);
+      }
+      if (complete && translated.join('').trim()) {
+        cache[key(target, batch[0])] = translated.join('');
+        saveCache();
+      }
+    } else {
+      const result = await runBatch(batch, index);
+      if (signal?.aborted) break;
+      if (result?.size) {
+        for (const [s, value] of result) cache[key(target, s)] = value;
+        saveCache();
       }
     }
   }
-  const map = {};
-  for (const s of uniq) if (cache[key(target, s)] != null) map[s] = cache[key(target, s)];
-  return map;
+  if (!signal?.aborted && attempts && offline === attempts) throw lastError;
+  const map = Object.fromEntries(uniq.filter(cached).map(s => [s, cache[key(target, s)]]));
+  return { map, failed: uniq.filter(s => !cached(s)) };
 }
-

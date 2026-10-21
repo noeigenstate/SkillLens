@@ -14,6 +14,14 @@ const BATCH_SIZE = 6;
 
 function directPost(urlStr, body, apiKey = 'local', timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
+    let timer, settled = false;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err); else resolve(value);
+    };
+    const disconnected = () => finish(new Error('模型连接中断'));
     const u = new URL(urlStr);
     const lib = u.protocol === 'https:' ? https : http;
     const payload = JSON.stringify(body);
@@ -32,14 +40,21 @@ function directPost(urlStr, body, apiKey = 'local', timeoutMs = 90000) {
       res.on('data', d => { out += d; });
       res.on('end', () => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP ${res.statusCode}: ${out.slice(0, 200)}`));
+          return finish(new Error(`模型请求失败：HTTP ${res.statusCode}`));
         }
-        try { resolve(JSON.parse(out)); }
-        catch (e) { reject(new Error(`JSON 解析失败: ${out.slice(0, 200)}`)); }
+        try { finish(null, JSON.parse(out)); }
+        catch { finish(new Error('模型返回无效 JSON')); }
       });
+      res.on('error', disconnected);
+      res.on('aborted', disconnected);
+      res.on('close', () => { if (!res.complete) disconnected(); });
     });
-    req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
-    req.on('error', reject);
+    timer = setTimeout(() => {
+      const err = new Error(`请求超时 (${timeoutMs}ms)`);
+      finish(err);
+      req.destroy(err);
+    }, timeoutMs);
+    req.on('error', err => finish(err));
     req.write(payload);
     req.end();
   });

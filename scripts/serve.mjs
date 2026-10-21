@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { ROOT, resolveRoots, scan, version, summarize } from './lib/scan.mjs';
 import { fetchOfficial, officialStatus, search, fetchSkill } from './lib/online.mjs';
 import { record } from './lib/recorder.mjs';
-import { translate, detectBackend, generateTestCase, getAllCachedTestCases, probeOllama } from './lib/translate.mjs';
+import { translate, detectBackend, generateTestCase, getAllCachedTestCases, probeOllama, markForeground, msSinceForeground } from './lib/translate.mjs';
 
 const argv = process.argv.slice(2);
 const portArg = argv.indexOf('--port');
@@ -18,6 +18,8 @@ const OUT = path.join(ROOT, 'output');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.mp4': 'video/mp4', '.md': 'text/markdown; charset=utf-8' };
 
 function send(res, code, body, type) {
+  if (res.destroyed || res.writableEnded) return;
+  if (res.headersSent) return res.destroy();
   res.writeHead(code, { 'Content-Type': type || 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
@@ -29,6 +31,7 @@ function readBody(req, limit = 30 * 1024 * 1024) {
     req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('请求太大')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
+    req.on('aborted', () => reject(new Error('客户端已断开')));
   });
 }
 
@@ -43,18 +46,21 @@ function skillsNow() {
 let recording = false;
 let fetching = null;
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
   try {
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); }
+    catch { return send(res, 400, { ok: false, error: '无效的请求地址' }); }
     if (url.pathname === '/api/skills') return send(res, 200, skillsNow());
     if (url.pathname === '/api/version') return send(res, 200, version(roots), 'text/plain; charset=utf-8');
     if (url.pathname === '/api/ollama' && req.method === 'GET') {
       const ol = await probeOllama(true);
-      return send(res, 200, { ok: !!ol, ollama: ol });
+      return send(res, 200, { ok: !!ol, ollama: ol ? { url: ol.url, model: ol.model } : null });
     }
     if (url.pathname === '/api/testcase' && req.method === 'GET') {
       return send(res, 200, { ok: true, map: getAllCachedTestCases() });
     }
     if (url.pathname === '/api/testcase' && req.method === 'POST') {
+      markForeground();
       const body = JSON.parse(await readBody(req));
       try {
         const tc = await generateTestCase(body, 'high');
@@ -68,10 +74,13 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { backend: be ? be.name : null });
     }
     if (url.pathname === '/api/translate' && req.method === 'POST') {
+      markForeground();
+      const ac = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) ac.abort(); });
       const body = JSON.parse(await readBody(req));
       try {
-        const map = await translate(body.target, Array.isArray(body.items) ? body.items.slice(0, 500) : [], !!body.markdown, 'high');
-        return send(res, 200, { ok: true, map });
+        const result = await translate(body.target, Array.isArray(body.items) ? body.items.slice(0, 500) : body.items, !!body.markdown, 'high', ac.signal);
+        return send(res, 200, { ok: true, ...result });
       } catch (e) {
         console.error('翻译失败：' + e.message);
         return send(res, 200, { ok: false, error: e.message });
@@ -99,25 +108,49 @@ const server = http.createServer(async (req, res) => {
       recording = true;
       try {
         const body = JSON.parse(await readBody(req));
+        if (body.seconds != null && (typeof body.seconds !== 'number' || !Number.isFinite(body.seconds))) {
+          return send(res, 400, { ok: false, error: 'seconds 必须是有限数字或 null' });
+        }
+        const seconds = body.seconds == null ? null : Math.max(1, Math.min(90, body.seconds));
         const name = String(body.name || 'skill').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 60);
         fs.mkdirSync(path.join(OUT, '.tmp'), { recursive: true });
         const page = path.join(OUT, '.tmp', name + '.html');
         fs.writeFileSync(page, String(body.html || ''));
         const file = path.join(OUT, name + '.mp4');
         const motion = body.motion === 'flat' || body.motion === 'minimal' ? 'flat' : '3d';
-        const r = await record({ url: `http://127.0.0.1:${PORT}/output/.tmp/${encodeURIComponent(name)}.html?record=1&motion=${motion}`, out: file, seconds: body.seconds || null, log: m => console.log(m) });
+        const r = await record({ url: `http://127.0.0.1:${PORT}/output/.tmp/${encodeURIComponent(name)}.html?record=1&motion=${motion}`, out: file, seconds, log: m => console.log(m) });
         console.log('视频完成：' + path.relative(ROOT, file));
         return send(res, 200, { ok: true, file: path.relative(ROOT, file).replace(/\\/g, '/'), url: '/output/' + encodeURIComponent(name) + '.mp4', seconds: r.seconds });
       } finally { recording = false; }
     }
-    // 静态文件，只允许项目目录内
-    let p = decodeURIComponent(url.pathname);
+    // 静态资源白名单，隐藏目录仅放行录制临时页
+    let p, rawPath;
+    try {
+      p = decodeURIComponent(url.pathname);
+      rawPath = decodeURIComponent(req.url.replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/)[0]);
+    } catch { return send(res, 400, 'bad path', 'text/plain'); }
+    const parts = rawPath.split('/').filter(Boolean);
+    if (rawPath.includes('\\') || parts.some((s, i) => s.startsWith('.') && !(s === '.tmp' && i === 1 && parts[0] === 'output'))) {
+      return send(res, 404, 'not found', 'text/plain');
+    }
     if (p === '/') p = '/index.html';
     const file = path.resolve(ROOT, '.' + p);
     if (!file.startsWith(ROOT + path.sep) && file !== ROOT) return send(res, 403, 'forbidden', 'text/plain');
+    if (!(p === '/index.html' || /^\/(src|docs|output)\//.test(p) || /^\/data\/(skills|translations|testcases)\.js$/.test(p))) {
+      return send(res, 404, 'not found', 'text/plain');
+    }
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'not found', 'text/plain');
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    stream.on('error', e => {
+      if (res.headersSent) res.destroy();
+      else send(res, e.code === 'ENOENT' ? 404 : 500, 'read failed', 'text/plain');
+    });
+    res.on('close', () => stream.destroy());
+    stream.on('open', () => {
+      if (res.destroyed) return stream.destroy();
+      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+      stream.pipe(res);
+    });
   } catch (e) {
     console.error(e);
     send(res, 500, { ok: false, error: e.message });
@@ -153,8 +186,6 @@ server.listen(PORT, '127.0.0.1', async () => {
   // 后台低优单路预热本机技能的「最简测试用例 + 使用前后对比」
   if (be && be.ollama && !argv.includes('--no-warm')) {
     (async () => {
-      // 服务就绪后延迟 3 秒再低优预热，绝不抢占前台页面的即时交互
-      await new Promise(r => setTimeout(r, 3000));
       const tcMap = getAllCachedTestCases();
       const localSkills = data.skills.filter(s => s.kind !== 'catalog' && s.kind !== 'official' && s.groupKey !== 'market');
       const seen = new Set();
@@ -163,6 +194,9 @@ server.listen(PORT, '127.0.0.1', async () => {
         if (!k || seen.has(k) || (tcMap[k] && tcMap[k].input)) continue;
         seen.add(k);
         try {
+          while (msSinceForeground() < 20000) {
+            await new Promise(r => setTimeout(r, 20000 - msSinceForeground()));
+          }
           await generateTestCase(s, 'low');
           await new Promise(r => setTimeout(r, 600));
         } catch { break; }

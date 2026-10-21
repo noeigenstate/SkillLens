@@ -33,63 +33,117 @@ export async function launch(opts = {}) {
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--mute-audio',
     '--allow-file-access-from-files', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
     'about:blank',
-  ], { stdio: 'ignore' });
-  const portFile = path.join(dir, 'DevToolsActivePort');
-  let port = null;
-  for (let i = 0; i < 200 && !port; i++) {
-    await sleep(100);
-    try { port = fs.readFileSync(portFile, 'utf8').split('\n')[0].trim() || null; } catch { /* 还没写出来 */ }
-  }
-  if (!port) { proc.kill(); throw new Error('浏览器没有启动调试端口'); }
-  let page = null;
-  for (let i = 0; i < 50 && !page; i++) {
-    try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { await sleep(100); }
-  }
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-  let seq = 0;
-  const pending = new Map();
-  const waiters = [];
-  ws.onmessage = ev => {
-    const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id);
-      pending.delete(msg.id);
-      if (msg.error) reject(new Error(msg.error.message)); else resolve(msg.result);
-    } else if (msg.method) {
-      for (let i = waiters.length - 1; i >= 0; i--) if (waiters[i].method === msg.method) { waiters[i].resolve(msg.params); waiters.splice(i, 1); }
+  ], { stdio: 'ignore', windowsHide: true });
+  let spawnError;
+  proc.on('error', e => { spawnError = e; });
+  const cleanup = () => {
+    try { proc.kill(); } catch { /* 已退出 */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 稍后清理 */ }
+  };
+  let ws;
+  try {
+    const portFile = path.join(dir, 'DevToolsActivePort');
+    let port = null;
+    for (let i = 0; i < 200 && !port; i++) {
+      await sleep(100);
+      if (spawnError) throw new Error('启动浏览器失败：' + spawnError.message);
+      if (proc.exitCode !== null) throw new Error('浏览器已退出');
+      try { port = fs.readFileSync(portFile, 'utf8').split('\n')[0].trim() || null; } catch { /* 还没写出来 */ }
     }
-  };
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++seq;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  const once = method => new Promise(resolve => waiters.push({ method, resolve }));
-  const evaluate = async (expression) => {
-    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception ? r.exceptionDetails.exception.description : r.exceptionDetails.text);
-    return r.result.value;
-  };
-  await send('Page.enable');
-  await send('Runtime.enable');
-  return {
-    send, evaluate,
-    async goto(url) { const loaded = once('Page.loadEventFired'); await send('Page.navigate', { url }); await loaded; },
-    async setViewport(width, height, scale = 1) { await send('Emulation.setDeviceMetricsOverride', { width: Math.ceil(width), height: Math.ceil(height), deviceScaleFactor: scale, mobile: false }); },
-    async screenshot({ format = 'png', quality, clip } = {}) {
-      const params = { format, captureBeyondViewport: false };
-      if (quality) params.quality = quality;
-      if (clip) params.clip = { ...clip, scale: 1 };
-      const r = await send('Page.captureScreenshot', params);
-      return Buffer.from(r.data, 'base64');
-    },
-    async close() {
-      try { await send('Browser.close'); } catch { /* 已关闭 */ }
-      try { ws.close(); } catch { /* ignore */ }
-      setTimeout(() => { try { proc.kill(); } catch { /* ignore */ } try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } }, 500);
-    },
-  };
+    if (!port) throw new Error('浏览器没有启动调试端口');
+    let page = null;
+    for (let i = 0; i < 50 && !page; i++) {
+      try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) })).json()).find(t => t.type === 'page'); } catch { await sleep(100); }
+    }
+    if (!page) throw new Error('找不到浏览器调试页面');
+    ws = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('浏览器连接超时')), 10000);
+      const finish = err => { clearTimeout(timer); if (err) reject(err); else resolve(); };
+      ws.onopen = () => finish();
+      ws.onerror = () => finish(new Error('浏览器连接失败'));
+      ws.onclose = () => finish(new Error('浏览器连接已关闭'));
+    });
+    let seq = 0;
+    const pending = new Map();
+    const waiters = [];
+    const rejectAll = () => {
+      const err = new Error('浏览器连接已关闭');
+      for (const p of pending.values()) { clearTimeout(p.timer); p.reject(err); }
+      pending.clear();
+      for (const w of waiters.splice(0)) { clearTimeout(w.timer); w.reject(err); }
+    };
+    ws.onclose = rejectAll;
+    ws.onerror = rejectAll;
+    ws.onmessage = ev => {
+      const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
+      if (msg.id && pending.has(msg.id)) {
+        const { resolve, reject, timer } = pending.get(msg.id);
+        clearTimeout(timer);
+        pending.delete(msg.id);
+        if (msg.error) reject(new Error(msg.error.message)); else resolve(msg.result);
+      } else if (msg.method) {
+        for (let i = waiters.length - 1; i >= 0; i--) if (waiters[i].method === msg.method) { clearTimeout(waiters[i].timer); waiters[i].resolve(msg.params); waiters.splice(i, 1); }
+      }
+    };
+    const send = (method, params = {}, timeoutMs = 30000) => new Promise((resolve, reject) => {
+      if (ws.readyState !== WebSocket.OPEN) return reject(new Error('浏览器连接已关闭'));
+      const id = ++seq;
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('浏览器命令超时：' + method)); }, timeoutMs);
+      pending.set(id, { resolve, reject, timer });
+      try { ws.send(JSON.stringify({ id, method, params })); }
+      catch (e) { clearTimeout(timer); pending.delete(id); reject(e); }
+    });
+    const once = method => {
+      let waiter;
+      const cancel = () => {
+        clearTimeout(waiter.timer);
+        const i = waiters.indexOf(waiter);
+        if (i >= 0) waiters.splice(i, 1);
+      };
+      const promise = new Promise((resolve, reject) => {
+        waiter = { method, resolve, reject };
+        waiter.timer = setTimeout(() => { cancel(); reject(new Error('页面导航超时 (30000ms)')); }, 30000);
+        waiters.push(waiter);
+      });
+      return { promise, cancel };
+    };
+    const evaluate = async (expression) => {
+      const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception ? r.exceptionDetails.exception.description : r.exceptionDetails.text);
+      return r.result.value;
+    };
+    await send('Page.enable');
+    await send('Runtime.enable');
+    return {
+      send, evaluate,
+      async goto(url) {
+        const loaded = once('Page.loadEventFired');
+        try {
+          await Promise.all([loaded.promise, send('Page.navigate', { url }).then(r => {
+            if (r.errorText) throw new Error('页面导航失败：' + r.errorText);
+          })]);
+        } finally { loaded.cancel(); }
+      },
+      async setViewport(width, height, scale = 1) { await send('Emulation.setDeviceMetricsOverride', { width: Math.ceil(width), height: Math.ceil(height), deviceScaleFactor: scale, mobile: false }); },
+      async screenshot({ format = 'png', quality, clip } = {}) {
+        const params = { format, captureBeyondViewport: false };
+        if (quality) params.quality = quality;
+        if (clip) params.clip = { ...clip, scale: 1 };
+        const r = await send('Page.captureScreenshot', params);
+        return Buffer.from(r.data, 'base64');
+      },
+      async close() {
+        try { await send('Browser.close', {}, 1000); } catch { /* 已关闭 */ }
+        try { ws.close(); } catch { /* ignore */ }
+        setTimeout(cleanup, 500);
+      },
+    };
+  } catch (e) {
+    try { ws?.close(); } catch { /* 未连接 */ }
+    cleanup();
+    throw e;
+  }
 }
 
 export function fileUrl(p) {
