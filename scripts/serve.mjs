@@ -8,6 +8,7 @@ import { ROOT, resolveRoots, scan, version, summarize } from './lib/scan.mjs';
 import { fetchOfficial, officialStatus, search, fetchSkill } from './lib/online.mjs';
 import { record } from './lib/recorder.mjs';
 import { translate, detectBackend, generateTestCase, getAllCachedTestCases, probeOllama, markForeground, msSinceForeground } from './lib/translate.mjs';
+import { analyze, jobState } from './lib/aiflow.mjs';
 
 const argv = process.argv.slice(2);
 const portArg = argv.indexOf('--port');
@@ -28,7 +29,7 @@ function readBody(req, limit = 30 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('请求太大')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { size += c.length; if (size > limit) { reject(Object.assign(new Error('请求太大'), { status: 413 })); } else chunks.push(c); });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
     req.on('aborted', () => reject(new Error('客户端已断开')));
@@ -52,6 +53,20 @@ const server = http.createServer(async (req, res) => {
     catch { return send(res, 400, { ok: false, error: '无效的请求地址' }); }
     if (url.pathname === '/api/skills') return send(res, 200, skillsNow());
     if (url.pathname === '/api/version') return send(res, 200, version(roots), 'text/plain; charset=utf-8');
+    // npm run stop 用它确认端口上确实是 SkillLens，再结束这个进程
+    if (url.pathname === '/api/pid' && req.method === 'GET') return send(res, 200, { app: 'skilllens', pid: process.pid });
+    if (url.pathname === '/api/aiflow' && req.method === 'GET') {
+      return send(res, 200, jobState(url.searchParams.get('key')) || { state: 'none' });
+    }
+    if (url.pathname === '/api/aiflow' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req, 1024 * 1024)); }
+      catch (e) { return send(res, e.status || 400, { error: e.status === 413 ? 'body-too-large' : 'invalid-json' }); }
+      if (!body || typeof body.text !== 'string' || !body.text.trim()) return send(res, 400, { error: 'missing-text' });
+      try {
+        return send(res, 200, await analyze({ id: String(body.id || ''), name: String(body.name || ''), text: body.text }, { force: body.force === true, peek: body.peek === true }));
+      } catch (e) { return send(res, e.status || 500, { error: e.status === 503 ? 'no-llm' : 'aiflow-failed' }); }
+    }
     if (url.pathname === '/api/ollama' && req.method === 'GET') {
       const ol = await probeOllama(true);
       return send(res, 200, { ok: !!ol, ollama: ol ? { url: ol.url, model: ol.model } : null });

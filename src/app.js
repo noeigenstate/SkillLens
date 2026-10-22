@@ -25,6 +25,7 @@
     lang: params.get('lang') || store.get('lang2', 'zh'),
     motion: RECORD ? (params.get('motion') === 'flat' || params.get('motion') === 'minimal' ? 'flat' : '3d') : motionSetting(store.get('motion', '3d')), panning: false,
     translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, total: 0, missing: 0, busy: false, error: '' }, showOrig: false,
+    aiChoices: store.get('aiChoices', {}),
   };
   SV.i18n.set(state.lang);
 
@@ -438,6 +439,97 @@
   }
 
   const specCache = new Map();
+  const aiCache = new Map();
+  let aiEpoch = 0, aiTimer = 0, aiAbort = null, aiAvailable = null, aiPending = Promise.resolve();
+  function aiEntry(s) {
+    const entry = s && aiCache.get(s.id);
+    return entry && entry.text === s.text ? entry : null;
+  }
+  function stopAiPoll() {
+    aiEpoch++;
+    clearTimeout(aiTimer);
+    if (aiAbort) aiAbort.abort();
+  }
+  function rebuildAi() {
+    const s = findSkill(state.currentId);
+    if (!s) return;
+    clearReads();
+    trAbort('detail');
+    state.selected = null;
+    state.showOrig = false;
+    buildSpec(s);
+    writeView(false);
+    draw();
+    ensureFonts(state.spec);
+    renderHeader();
+    renderDetail();
+    renderStruct();
+  }
+  function renderAiUi() {
+    const chip = $('#aiFlow'), s = findSkill(state.currentId), entry = aiEntry(s), job = entry && entry.job;
+    if (!chip) return;
+    chip.hidden = !state.server || aiAvailable !== true || !s;
+    if (chip.hidden) return;
+    const edited = !!state.overrides[s.id], busy = job && ['queued', 'running'].includes(job.state);
+    chip.title = edited ? t('ai.edited') : job && job.error || '';
+    chip.classList.toggle('busy', !!busy);
+    chip.classList.toggle('retry', !!(job && job.state === 'error'));
+    const disabled = edited ? ' disabled' : '';
+    if (busy) chip.innerHTML = `<button disabled>${esc(t('ai.progress', job.step, job.total == null ? '…' : job.total, job.label || ''))}</button>`;
+    else if (job && job.state === 'done') {
+      const ai = !edited && state.aiChoices[s.id] !== 'rules';
+      chip.innerHTML = `<button data-ai="rules" aria-pressed="${!ai}"${disabled}>${t('ai.rules')}</button><span aria-hidden="true">|</span><button data-ai="ai" aria-pressed="${ai}"${disabled}>${t('ai.name')}</button>`;
+    } else chip.innerHTML = `<button data-ai="start"${disabled}>${t(job && job.state === 'error' ? 'ai.retry' : 'ai.parse')}</button>`;
+  }
+  async function fetchAi(s, peek = true, preferredPhase = null) {
+    stopAiPoll();
+    if (!state.server || RECORD) return;
+    const epoch = aiEpoch;
+    aiAbort = new AbortController();
+    const signal = aiAbort.signal;
+    const accept = job => {
+      if (epoch !== aiEpoch || state.currentId !== s.id || findSkill(s.id)?.text !== s.text) return false;
+      aiAvailable = true;
+      aiCache.set(s.id, { text: s.text, job });
+      if (job.state === 'done' && job.spec && state.aiChoices[s.id] !== 'rules' && !state.overrides[s.id]) {
+        if (preferredPhase) state.view.phase = preferredPhase;
+        rebuildAi();
+      }
+      else renderAiUi();
+      preferredPhase = null;
+      if (['queued', 'running'].includes(job.state)) aiTimer = setTimeout(() => poll(job.key), 2000);
+      return true;
+    };
+    const failed = error => {
+      if (epoch !== aiEpoch || signal.aborted) return;
+      if (error.message === 'no-llm' || error.message === 'unavailable') aiAvailable = false;
+      else {
+        aiAvailable = true;
+        aiCache.set(s.id, { text: s.text, job: { state: 'error', error: error.message } });
+      }
+      renderAiUi();
+    };
+    const read = async response => {
+      if (response.status === 503) throw new Error('no-llm');
+      if (!response.ok) throw new Error(response.status === 404 ? 'unavailable' : t('ai.failed'));
+      return response.json();
+    };
+    const poll = async key => {
+      try { accept(await read(await fetch('api/aiflow?key=' + encodeURIComponent(key), { signal, cache: 'no-store' }))); }
+      catch (e) { failed(e); }
+    };
+    if (!peek) {
+      aiAvailable = true;
+      aiCache.set(s.id, { text: s.text, job: { state: 'queued', step: 0, total: null, label: '' } });
+      renderAiUi();
+    }
+    try {
+      accept(await read(await fetch('api/aiflow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, name: s.name, text: s.text, peek, force: !peek }), signal })));
+    } catch (e) {
+      if (e instanceof TypeError && peek && epoch === aiEpoch) { aiAvailable = false; renderAiUi(); }
+      else failed(e);
+    }
+  }
   function buildSpec(s) {
     // 同一来源只提取一次，展开阶段只换可见结构
     let cached = specCache.get(s.id);
@@ -464,9 +556,11 @@
     }
     const auto = state.autoSpec = cached.auto;
     state.specError = '';
-    let full = auto;
+    const ai = aiEntry(s)?.job?.spec;
+    const aiFull = state.aiChoices[s.id] !== 'rules' && ai;
+    let full = aiFull?.ai?.noWorkflow ? auto : aiFull || auto;
     const ov = state.overrides[s.id];
-    if (cached.hier && cached.override === ov && cached.lang === state.lang) {
+    if (cached.hier && cached.override === ov && cached.lang === state.lang && cached.aiFull === aiFull) {
       state.fullSpec = cached.full;
       state.hier = cached.hier;
       state.specError = cached.error;
@@ -478,11 +572,11 @@
       try {
         const sp = SV.dsl.parse(ov, { name: auto.name, description: auto.description });
         sp.source = 'edited';
-        full = mergeDetails(sp, auto);
+        full = mergeDetails(mergeDetails(sp, auto), ai || auto);
       } catch (e) { state.specError = t('detail.parseWarn', e.message); }
     }
     setFullSpec(full);
-    Object.assign(cached, { full, hier: state.hier, override: ov, lang: state.lang, error: state.specError });
+    Object.assign(cached, { full, hier: state.hier, override: ov, aiFull, lang: state.lang, error: state.specError });
   }
 
   function setFullSpec(full) {
@@ -535,6 +629,7 @@
     $('#stage').scrollTo(0, 0);
     renderHeader();
     renderDetail();
+    $('#detail').scrollTop = 0; // 从面板底部的区块点进来时，新内容从头看起
   }
   function overview() {
     if (state.view.phase && history.state && history.state.drill && history.state.skill === state.currentId) history.back();
@@ -617,6 +712,7 @@
       (l.nodes || []).forEach(n => { field(n, 'title', 2); field(n, 'tag', 3); lines(n); });
       if (l.notes) l.notes = l.notes.map(v => one(v, 4));
     }
+    (spec.sidePhases || []).forEach(x => field(x, 'title', 2));
     (spec.edges || []).forEach(e => field(e, 'label', 4));
     (spec.stubs || []).forEach(x => { field(x, 'text', 4); field(x, 'label', 4); });
   }
@@ -856,6 +952,7 @@
     renderStruct();
     $('#source').textContent = s.text;
     $('#empty').hidden = true;
+    aiPending = fetchAi(s, true, phase);
   }
 
   /* —— 字体：网页字体加载完以后重新排版，否则量出来的文字宽度不准 —— */
@@ -915,6 +1012,7 @@
   /* 顶栏：标题 + 真实名称（slug）小字；悬停看完整路径。title 和真实名称差不多时不重复 */
   const sameName = (a, b) => { const n = x => String(x || '').toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]+/g, ''); return n(a) === n(b); };
   function renderHeader() {
+    renderAiUi();
     const s = findSkill(state.currentId);
     const spec = state.spec;
     const dispName = s ? skillDisplayName(s) : '';
@@ -1447,6 +1545,13 @@
       </div>`;
   }
 
+  /* 总览右侧的阶段列表：主流程一组；参考资料与规则不在总览画布上，另列一组，点进去是各自的详情 */
+  function phaseListHtml(group, titleKey) {
+    const list = state.hier ? state.hier.phases.filter(p => group === 'flow' ? p.kind === 'flow' : p.kind !== 'flow' && p.drill) : [];
+    if (!list.length) return '';
+    return `<div class="section-title">${t(titleKey)}</div><div class="links phase-list">${list.map(p => `<button ${p.drill ? `data-phase="${p.id}"` : `data-goto="${p.id}"`}><span>${esc(phaseText(p.title))}</span><small>${esc(p.badge)}</small>${p.drill ? ' ›' : ''}</button>`).join('')}</div>`;
+  }
+
   function renderDetail() {
     const el = $('#detail');
     const s = findSkill(state.currentId);
@@ -1476,6 +1581,7 @@
       el.innerHTML = `
         <button class="btn ghost" data-goto="" style="margin:-6px 0 8px -8px">${iconSvg('chevron-left', 14)}${t('detail.back')}</button>
         <h3>${esc(n.title)}</h3>
+        ${n.quoted === false ? `<div class="warn">${t('ai.unquoted')}</div>` : ''}
         <div class="meta"><span class="badge">${t('type.' + (n.type || 'step'))}</span>${n.optional ? `<span class="badge">${t('detail.optional')}</span>` : ''}${n.tag ? `<span>${esc(n.tag)}</span>` : ''}${lane ? `<span>· ${esc(lane.title)}</span>` : ''}</div>
         ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd><code class="path">${esc(n.path)}</code></dd></dl>` : ''}
         ${lines ? `<div class="md"><p>${esc(lines).replace(/\n/g, '<br>')}</p></div>` : ''}
@@ -1505,7 +1611,10 @@
       <h3>${esc(sp.title || dispName)}</h3>
       <div class="meta"><span class="badge ${sp.source === 'auto' ? '' : 'flow'}">${srcName}</span><span>${esc(groupName(s))}</span></div>
       ${renderTestCaseCard(s, sp)}
-      ${state.hier ? `<div class="section-title">${t('hier.phases')}</div><div class="links phase-list">${state.hier.phases.map(p => `<button ${p.drill ? `data-phase="${p.id}"` : `data-goto="${p.id}"`}><span>${esc(phaseText(p.title))}</span><small>${esc(p.badge)}</small>${p.drill ? ' ›' : ''}</button>`).join('')}</div>` : ''}
+      ${aiEntry(s)?.job?.spec?.ai?.noWorkflow ? `<p class="hint">${esc(t('ai.noWorkflow'))}</p>` : ''}
+      ${state.fullSpec?.ai && state.fullSpec.source === 'ai' ? `<p class="hint">${esc(t('ai.evidence', state.fullSpec.ai.model))}</p><p class="hint">${esc(t('ai.verify', state.fullSpec.ai.verify.quoted, state.fullSpec.ai.verify.nodes))}${state.fullSpec.ai.verify.fallbackPhases.length ? '<br>' + esc(t('ai.fallback', state.fullSpec.ai.verify.fallbackPhases.join(' · '))) : ''}${state.fullSpec.ai.verify.truncatedPhases.length ? '<br>' + esc(t('ai.truncated', state.fullSpec.ai.verify.truncatedPhases.join(' · '))) : ''}</p>` : ''}
+      ${phaseListHtml('flow', 'hier.phases')}
+      ${phaseListHtml('side', 'hier.side')}
       <div class="md"><p>${esc(listDesc(s) || sp.description || t('detail.noDesc'))}</p></div>
       <div class="stats">
         <div class="stat"><b>${sp.lanes.length}</b><span>${t('detail.lanes')}</span></div>
@@ -1663,14 +1772,26 @@ SV.i18n.set('${state.lang}');
   var hier = SV.hier.build(full), query = new URLSearchParams(location.search), recording = query.has('record');
   var motion = recording ? (query.get('motion') === 'flat' || query.get('motion') === 'minimal' ? 'flat' : '3d') : '${state.motion}';
   var stage = document.getElementById('stage'), back = document.getElementById('back'), heading = document.getElementById('level'), card = document.getElementById('titleCard');
-  var levels = [hier.overview].concat(hier.phases.filter(function (p) { return p.drill; }).map(function (p) { return hier.detail(p.id); }));
+  // 视频与总览只走主流程的可展开阶段；参考资料与规则的详情排在最后，不进时间轴，从总览左下角的按钮进入
+  var drills = hier.phases.filter(function (p) { return p.drill; });
+  var mainDrills = drills.filter(function (p) { return p.kind === 'flow'; }), sideDrills = drills.filter(function (p) { return p.kind !== 'flow'; });
+  var levels = [hier.overview].concat(mainDrills.concat(sideDrills).map(function (p) { return hier.detail(p.id); }));
+  // 没有主线的技能，总览里仍画参考卡片，它们和主线阶段一样进时间轴
+  var onCanvas = hier.overview.lanes.some(function (l) { return l.kind === 'ref'; });
+  var timed = 1 + mainDrills.length + (onCanvas ? sideDrills.length : 0), sideBox = document.getElementById('side');
+  if (!recording && sideDrills.length && !onCanvas) {
+    sideBox.innerHTML = '<span></span>' + sideDrills.map(function (p) { return '<button data-phase="' + p.id + '"></button>'; }).join('');
+    sideBox.firstChild.textContent = SV.i18n.t('hier.side');
+    sideDrills.forEach(function (p, i) { sideBox.children[i + 1].textContent = p.title + ' · ' + p.badge; });
+  }
   var p, G, cam, current = -1, playing = ${state.playing}, timeline = [], end = 0;
   function player(graph, el, autoplay) {
     return SV.render.createPlayer(el.querySelector('svg'), graph, { autoplay: autoplay, loop: !recording, reducedMotion: motion === 'minimal', camera: { el: el, strength: motion === '3d' ? 1 : 0 } });
   }
-  var views = levels.map(function (spec) {
+  var views = levels.map(function (spec, index) {
     var graph = SV.layout(spec, { cols: ${state.cols} });
     var html = '<div class="sv-cam">' + SV.render.toSVG(graph, { theme: '${state.theme}' }) + '</div>';
+    if (index >= timed) return { spec: spec, graph: graph, html: html };
     stage.innerHTML = html;
     var temp = player(graph, stage.querySelector('.sv-cam'), false);
     var round = temp.tour && temp.tour.segs.filter(function (s) { return s.round === 0; }).pop();
@@ -1698,6 +1819,7 @@ SV.i18n.set('${state.lang}');
     p = player(G, cam, active && playing && !recording);
     resizeCamera();
     back.hidden = index === 0;
+    sideBox.hidden = index !== 0 || !sideBox.children.length;
     var phase = hier.phases.find(function (phase) { return phase.id === view.spec.phase; });
     heading.textContent = phase ? full.title + ' › ' + (phase.laneTitle ? phase.laneTitle + ' › ' : '') + phase.title + ' · ' + phase.badge : full.title;
     document.title = heading.textContent + ' · ' + SV.i18n.t('app.title');
@@ -1718,6 +1840,10 @@ SV.i18n.set('${state.lang}');
     show(Math.max(0, index), true);
   }
   back.onclick = overview;
+  sideBox.addEventListener('click', function (e) {
+    var button = e.target.closest('[data-phase]');
+    if (button) navigate(views.findIndex(function (v) { return v.spec.phase === button.dataset.phase; }), true);
+  });
   stage.addEventListener('click', function (e) {
     var el = e.target.closest('.sv-node'), node = el && G.nodes[el.dataset.node];
     if (current === 0 && node && node.spec.drill) {
@@ -1757,8 +1883,10 @@ SV.i18n.set('${state.lang}');
   window.seek = window.SVRec.seek;
 })();`;
     return standaloneHtml(false)
-      .replace('<div id="stage"></div>', `<button id="back" hidden>${esc(t('hier.back'))}</button><div id="level"></div><div id="stage"></div><div id="titleCard" hidden></div>`)
+      .replace('<div id="stage"></div>', `<button id="back" hidden>${esc(t('hier.back'))}</button><div id="level"></div><div id="stage"></div><div id="side" hidden></div><div id="titleCard" hidden></div>`)
       .replace('</style>', `#back{position:fixed;left:16px;top:16px;z-index:4;padding:8px 14px;border:1px solid ${SV.render.THEMES[state.theme].text3};border-radius:10px;background:${SV.render.THEMES[state.theme].page};color:${SV.render.THEMES[state.theme].text};cursor:pointer}
+#side{position:fixed;left:16px;bottom:16px;right:16px;z-index:4;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font:13px sans-serif;color:${SV.render.THEMES[state.theme].text2}}
+#side button{padding:6px 12px;border:1px solid ${SV.render.THEMES[state.theme].text3};border-radius:10px;background:${SV.render.THEMES[state.theme].page};color:${SV.render.THEMES[state.theme].text};font:inherit;cursor:pointer}
 #level{position:fixed;top:18px;left:145px;right:16px;text-align:right;z-index:3;color:${SV.render.THEMES[state.theme].text};font:13px sans-serif;pointer-events:none}
 #titleCard{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:${SV.render.THEMES[state.theme].page};color:${SV.render.THEMES[state.theme].text};font:700 38px sans-serif;text-align:center;padding:60px}
 [hidden]{display:none!important}</style>`)
@@ -1806,6 +1934,19 @@ SV.i18n.set('${state.lang}');
 
   /* —— 事件 —— */
   function bind() {
+    $('#aiFlow').onclick = event => {
+      const action = event.target.closest('[data-ai]')?.dataset.ai, s = findSkill(state.currentId);
+      if (!action || !s || state.overrides[s.id]) return;
+      if (action === 'start') {
+        state.aiChoices[s.id] = 'ai';
+        store.set('aiChoices', state.aiChoices);
+        fetchAi(s, false);
+        return;
+      }
+      state.aiChoices[s.id] = action;
+      store.set('aiChoices', state.aiChoices);
+      rebuildAi();
+    };
     $('#list').addEventListener('click', e => {
       const del = e.target.closest('[data-del]');
       if (del) {
@@ -1921,7 +2062,7 @@ SV.i18n.set('${state.lang}');
         state.selected = null;
         state.showOrig = false;
         state.zoom = 'fit';
-        const full = mergeDetails(sp, state.autoSpec);
+        const full = mergeDetails(sp, state.fullSpec);
         setFullSpec(full);
         Object.assign(specCache.get(s.id), { full, hier: state.hier, override: text, lang: state.lang, error: '' });
         writeView(false);
@@ -2111,7 +2252,10 @@ SV.i18n.set('${state.lang}');
     const pick = state.skills.find(s => s.id === want) || state.skills.find(s => s.name === want) || state.skills.find(s => s.id.endsWith(want) && want) || state.skills[0];
     if (params.has('present') || RECORD) setPresent(true);
     if (RECORD) document.body.classList.add('recording');
-    if (pick) select(pick.id, false, initial.phase || params.get('node')); else showEmpty();
+    if (pick) {
+      select(pick.id, false, initial.phase || params.get('node'));
+      await aiPending;
+    } else showEmpty();
     watch();
     // 给自动化脚本用（录制、测试）
     window.SVApp = { state, select, openPhase, exportHtml: standaloneHtml, setLang, TR };

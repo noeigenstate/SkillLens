@@ -28,7 +28,7 @@ try { tcCache = JSON.parse(fs.readFileSync(TC_CACHE_FILE, 'utf8')); } catch { /*
 const key = (lang, text) => lang + '\u0001' + text;
 
 let tempSeq = 0;
-function atomicWrite(file, text) {
+export function atomicWrite(file, text) {
   const tmp = `${file}.${process.pid}.${++tempSeq}.tmp`;
   try {
     fs.writeFileSync(tmp, text);
@@ -38,7 +38,7 @@ function atomicWrite(file, text) {
   }
 }
 
-function mergeDisk(file, entries) {
+export function mergeDisk(file, entries) {
   try {
     const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
     for (const [k, v] of Object.entries(disk)) if (!Object.hasOwn(entries, k)) entries[k] = v;
@@ -126,7 +126,7 @@ export function directJsonRequest(urlStr, { method = 'GET', body = null, timeout
 }
 
 /* 从模型返回文本中提取 JSON（支持 {"translations":[...]}、裸数组 [...]、带代码块或格式瑕疵） */
-function extractJsonAny(rawText) {
+export function extractJsonAny(rawText) {
   const cleaned = String(rawText || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/^```(?:json)?\s*/im, '')
@@ -165,6 +165,7 @@ function extractJsonAny(rawText) {
 /* —— 后端零：局域网 Qwen (OpenAI 兼容 /v1/chat/completions) —— */
 let resolvedOllama = undefined;
 let probedAt = 0;
+export function cachedOllama() { return resolvedOllama || null; }
 export async function probeOllama(force = false) {
   if (!force && (resolvedOllama || (resolvedOllama === null && Date.now() - probedAt < 30000))) return resolvedOllama;
   const cfg = getOllamaConfig();
@@ -180,6 +181,7 @@ export async function probeOllama(force = false) {
         model: cfg.model,
         messages: [{ role: 'user', content: 'ok' }],
         chat_template_kwargs: { enable_thinking: false },
+        temperature: 0.2,
         max_tokens: 4,
       },
     });

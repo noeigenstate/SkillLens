@@ -77,6 +77,7 @@ SV.mod.hier = function (SV) {
       return found || cut(titles);
     }
     let groups = spec.lanes.filter(isFlow).map(whole);
+    const authored = spec.source === 'ai' && groups.length >= 1 && groups.length <= 8 && groups.every(g => (g.lanes[0].summary || []).length);
 
     /* 节点按原顺序展开；判断与紧随其后的分支目标留在同一阶段 */
     function expand(group) {
@@ -96,7 +97,7 @@ SV.mod.hier = function (SV) {
       }
       return units;
     }
-    while (groups.length < 3) {
+    while (!authored && groups.length < 3) {
       let largest = -1;
       groups.forEach((group, i) => {
         if (group.whole && nodesOf(group.lanes).length >= 2 &&
@@ -152,8 +153,9 @@ SV.mod.hier = function (SV) {
       return {
         id: 'P' + (i + 1), title: group.title,
         summary: summaries.length ? summaries.slice(0, 2) : [describe(group, nodes)],
-        badge: group.kind === 'notes' ? T('hier.rules', rules) : T(decisions ? 'hier.badge' : 'hier.badgeSteps', nodes.length, decisions),
-        drill: group.kind === 'flow' ? !!group.merged || canDrill(group.lanes) : group.kind === 'notes' ? nodes.length >= 2 || rules > 0 : nodes.length >= 2,
+        badge: group.kind === 'notes' ? T('hier.rules', rules) : group.kind === 'ref' ? T('hier.badgeItems', nodes.length) : T(decisions ? 'hier.badge' : 'hier.badgeSteps', nodes.length, decisions),
+        // 参考与规则不在总览画布上，只能从右侧列表点进详情，所以有内容就可展开
+        drill: group.kind === 'flow' ? !!group.merged || canDrill(group.lanes) : nodes.length >= 1 || rules > 0,
         laneIds: group.lanes.map(l => l.id), nodeIds: nodes.map(n => n.id), laneTitle: group.laneTitle, kind: group.kind,
       };
     });
@@ -174,14 +176,16 @@ SV.mod.hier = function (SV) {
     // 详情图沿用总览卡片的颜色：主流程绿、参考与规则灰
     const MAIN = 'green', SIDE = 'slate';
     overview.lanes = [{ id: 'OV', kind: 'flow', title: flow.length ? T('hier.main', flow.length) : T('hier.overview'), color: MAIN, nodes: flow.map((phase, i) => ({ ...phaseNode(phase), terminal: i === flow.length - 1 })), notes: [] }];
-    if (side.length) overview.lanes.push({ id: 'OVR', kind: 'ref', title: labels.refs, color: SIDE, nodes: side.map(phaseNode), notes: [] });
+    // 参考与规则默认不上总览（与主线没有连线，只会占画布）；完全没有主线时才留一条，免得总览是空的
+    const inView = phase => phase.kind === 'flow' || !flow.length;
+    if (side.length && !flow.length) overview.lanes.push({ id: 'OVR', kind: 'ref', title: labels.refs, color: SIDE, nodes: side.map(phaseNode), notes: [] });
     overview.edges = [];
     if (overview.trigger && flow.length) overview.edges.push({ from: overview.trigger.id, to: flow[0].id, kind: 'flow' });
     flow.forEach((phase, i) => { if (i) overview.edges.push({ from: flow[i - 1].id, to: phase.id, kind: 'flow' }); });
     const seenEdges = new Set();
     edges.forEach(edge => {
       const from = owner.get(edge.from), to = owner.get(edge.to);
-      if (!from || !to || from === to) return;
+      if (!from || !to || from === to || !inView(from) || !inView(to)) return;
       if (edge.kind !== 'loop' && from.kind === 'flow' && to.kind === 'flow' && flow.indexOf(to) === flow.indexOf(from) + 1) return;
       const mapped = { from: from.id, to: to.id, kind: edge.kind, label: edge.label || '' };
       const key = JSON.stringify(mapped);
@@ -189,9 +193,11 @@ SV.mod.hier = function (SV) {
     });
     overview.reads = unique(reads.flatMap(read => {
       const from = owner.get(read.from), to = owner.get(read.to);
-      return from && to && from !== to ? [{ from: from.id, to: to.id }] : [];
+      return from && to && from !== to && inView(from) && inView(to) ? [{ from: from.id, to: to.id }] : [];
     }));
     overview.stubs = [];
+    // 画布不画的参考与规则阶段：只带标题，让右侧列表里的标题和图上文字一起翻译
+    overview.sidePhases = side.map(phase => ({ id: phase.id, title: phase.title }));
     overview.stats = statsOf(overview);
 
     const exits = flow.map((phase, i) => flow[i + 1] ? T('hier.next', flow[i + 1].title) : '');

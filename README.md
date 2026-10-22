@@ -134,6 +134,7 @@ flow:
 | --- | --- |
 | `npm start` | Local server with live reload, translation and in-page video recording |
 | `npm run start:project` | Same, listing only this repo's skills |
+| `npm run stop [-- --port 5179 \| --all]` | Stops the running server (port 5178 by default); it checks the port really is SkillLens first |
 | `npm run scan` | Writes `data/skills.js` so `index.html` works without a server |
 | `npm run fetch` | Downloads the official skill libraries into `data/online/` |
 | `npm run record -- <skill> [--seconds 30] [--scale 2] [--theme blueprint\|dark\|light] [--lang en\|zh]` | Records an MP4 into `output/` |

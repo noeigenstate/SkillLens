@@ -119,6 +119,7 @@ flowchart LR
 | --- | --- |
 | `npm start` | 本地服务：实时刷新、自动翻译、页面内录视频 |
 | `npm run start:project` | 同上，只列本仓库的 skill |
+| `npm run stop [-- --port 5179 \| --all]` | 停止正在运行的服务（默认 5178 端口）；会先确认端口上确实是 SkillLens |
 | `npm run scan` | 生成 `data/skills.js`，不起服务也能打开 `index.html` |
 | `npm run fetch` | 下载官方 skill 库到 `data/online/` |
 | `npm run record -- <skill> [--seconds 30] [--scale 2] [--theme blueprint\|dark\|light] [--lang en\|zh]` | 录 MP4 到 `output/` |

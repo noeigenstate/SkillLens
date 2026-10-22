@@ -13,10 +13,12 @@
   "scripts": {
     "start": "node scripts/serve.mjs",
     "start:project": "node scripts/serve.mjs --project-only",
+    "stop": "node scripts/stop.mjs",
     "scan": "node scripts/scan.mjs",
     "scan:project": "node scripts/scan.mjs --project-only",
     "fetch": "node scripts/fetch-official.mjs",
     "record": "node scripts/record.mjs",
-    "gen:testcases": "node scripts/gen-testcases.mjs"
+    "gen:testcases": "node scripts/gen-testcases.mjs",
+    "aiflow": "node scripts/aiflow.mjs"
   }
 }
