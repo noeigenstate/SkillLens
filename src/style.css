@@ -401,6 +401,9 @@ select.btn option { background: var(--panel-2); color: var(--text); font-weight:
 .item .name { display: flex; align-items: center; gap: 6px; font-weight: 800; font-size: 12.5px; letter-spacing: -0.01em; }
 .item .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .desc { color: var(--text-2); font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1.5px; }
+/* 中文名下面的真实名称（slug） */
+.item .slug { font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+.item.active .slug { padding-left: 5px; }
 
 .badge {
   flex: none; font-size: 10px; font-weight: 700; line-height: 15px; font-style: normal; font-family: var(--mono);
@@ -816,3 +819,28 @@ body.recording .stage-nav { display: none; }
 .phase-list button small { margin-left: auto; flex: none; }
 .sv-drill:focus { outline: none; }
 .sv-drill:focus .sv-stack { stroke-width: 3; }
+
+/* —— 通俗讲解：右侧面板的开关与讲解块 —— */
+.seg { display: flex; gap: 0; margin: 0 0 12px; padding: 3px; border: 1.8px solid var(--line-2); border-radius: 99px; background: var(--slot-bg); box-shadow: inset 0 2px 3px var(--slot-shadow); }
+.seg button {
+  flex: 1; border: 0; border-radius: 99px; background: none; color: var(--text-2);
+  font: inherit; font-size: 12px; font-weight: 700; padding: 3px 8px 5px; cursor: pointer;
+}
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed="true"] {
+  color: var(--accent-ink); background: var(--accent);
+  box-shadow: inset 0 1.5px 0 var(--btn-shine), inset 0 -2.5px 0 var(--accent-lip);
+}
+.ex-card { margin: 2px 0 12px; display: flex; flex-direction: column; gap: 9px; }
+.ex-block { padding: 8px 11px 9px; border-radius: 12px; border: 1.5px solid var(--line-2); background: var(--panel-2); }
+.ex-block p { margin: 3px 0 0; color: var(--text); font-size: 13.5px; font-weight: 500; line-height: 1.7; overflow-wrap: anywhere; }
+.ex-label { color: var(--accent-lip); font-size: 11.5px; font-weight: 800; letter-spacing: 0.03em; }
+:root:not([data-ui="light"]) .ex-label { color: var(--accent); }
+.ex-block.why { background: var(--panel); }
+.ex-block.why .ex-label { color: var(--accent-2); }
+.ex-block.watch { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--panel-2)); }
+.ex-block.watch .ex-label { color: var(--warn-lip); }
+:root:not([data-ui="light"]) .ex-block.watch .ex-label { color: var(--warn); }
+.ex-block code { font-family: var(--mono); font-size: 12px; font-weight: 600; background: var(--slot-bg); padding: 1px 5px; border-radius: 6px; border: 1.5px solid var(--line); color: var(--text); overflow-wrap: anywhere; }
+.ex-note { margin: 0; color: var(--text-3); font-size: 11px; font-weight: 500; }
+.fm-key { margin-left: 4px; font-size: 10px; opacity: 0.8; }

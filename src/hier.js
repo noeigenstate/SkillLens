@@ -82,6 +82,7 @@ SV.mod.hier = function (SV) {
     /* 节点按原顺序展开；判断与紧随其后的分支目标留在同一阶段 */
     function expand(group) {
       const lane = group.lanes[0], units = [];
+      if (lane.choice) return [{ ...group, whole: false }];
       let targets = new Set();
       for (const node of lane.nodes) {
         if (!units.length || !targets.has(node.id) &&
@@ -157,6 +158,7 @@ SV.mod.hier = function (SV) {
         // 参考与规则不在总览画布上，只能从右侧列表点进详情，所以有内容就可展开
         drill: group.kind === 'flow' ? !!group.merged || canDrill(group.lanes) : nodes.length >= 1 || rules > 0,
         laneIds: group.lanes.map(l => l.id), nodeIds: nodes.map(n => n.id), laneTitle: group.laneTitle, kind: group.kind,
+        ...(group.lanes.length === 1 && group.lanes[0].choice ? { choice: copy(group.lanes[0].choice) } : {}),
       };
     });
     const flow = phases.slice(0, flowCount), side = phases.slice(flowCount);
@@ -196,6 +198,17 @@ SV.mod.hier = function (SV) {
       return from && to && from !== to && inView(from) && inView(to) ? [{ from: from.id, to: to.id }] : [];
     }));
     overview.stubs = [];
+    // 整个技能只有一个小选择时，总览直接画分支，仍可点判断进入详情。
+    if (flow.length === 1 && flow[0].choice && flow[0].nodeIds.length <= 8) {
+      const phase = flow[0], lane = groups[0].lanes[0];
+      const ids = new Set(phase.nodeIds), first = phase.nodeIds[0];
+      const mapId = id => id === first ? phase.id : id;
+      overview.lanes[0].title = phase.title;
+      overview.lanes[0].nodes = copy(lane.nodes).map(n => ({ ...n, id: mapId(n.id), drill: n.type === 'decision' ? phase.id : null }));
+      overview.edges = copy(edges.filter(e => ids.has(e.from) && ids.has(e.to))).map(e => ({ ...e, from: mapId(e.from), to: mapId(e.to) }));
+      if (overview.trigger) overview.edges.unshift({ from: overview.trigger.id, to: phase.id, kind: 'flow' });
+      overview.stubs = copy(stubs.filter(s => ids.has(s.from))).map(s => ({ ...s, from: mapId(s.from) }));
+    }
     // 画布不画的参考与规则阶段：只带标题，让右侧列表里的标题和图上文字一起翻译
     overview.sidePhases = side.map(phase => ({ id: phase.id, title: phase.title }));
     overview.stats = statsOf(overview);

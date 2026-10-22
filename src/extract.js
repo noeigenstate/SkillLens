@@ -75,7 +75,10 @@ SV.mod.extract = function (SV) {
   }
 
   const RE_TRIGGER = /(when (not )?to use|use this skill|何时(不)?(使用|用)|什么时候|触发|适用(场景|范围)?|使用场景|trigger)/i;
-  const RE_NOT = /(not|don'?t|不|别)/i;
+  const RE_NOT = /\b(?:not|don'?t)\b|不|别/i;
+  const RE_BACKGROUND = /^(?:when\s+not\s+to\s+use\b|limitations?\b|modes?\b|costs?\b|budget\b|cach(?:e|ing)\b|performance\b|troubleshoot\w*\b|faq\b|notes?\b|注意|限制|成本|预算|缓存|性能|常见问题|故障排查|何时不用|不适用|不宜使用)/i;
+  const RE_ROUTER = /^(?:which\b|choosing\b|when to use which\b|选择|用哪个)/i;
+  const RE_ALTERNATIVE = /^(recipe|option|approach|strategy|method|variant|alternative|pattern)\b|^(方案|方法|做法|选项|模式)/i;
   const RE_RULES = /(rules?\b|规则|注意|须知|notes?\b|gotchas?|pitfalls?|caveats?|坑|warnings?|caution|don'?ts?\b|never|禁止|红线|safety|安全|important|重要|tips?\b|提示|principles?|原则|constraints?|约束|guardrails?|best practices?|最佳实践|anti-?patterns?|mistakes|常见错误|守则|要点|铁律)/i;
   const RE_REF = /(reference|参考|appendix|附录|examples?|示例|例子|faq|troubleshoot|排错|排查|background|背景|overview|概述|概览|简介|about|关于|files?\b|文件|structure|结构|目录|\bapi\b|options?|选项|parameters?|参数|config(uration)?|glossary|术语|resources?|资源|links?\b|链接|see also|另见|related|相关|license|credits?|致谢|分工|scope|另一条路|alternatives?|备选|清单|checklist|cheat ?sheet|速查|terminology|concepts?|概念|your role|角色|what is|是什么)/i;
   const RE_FLOW = /(workflow|流程|步骤|steps?\b|process|procedure|pipeline|phases?|stages?|阶段|how to|usage|用法|怎么|如何|quick ?start|快速|getting started|开始|instructions?|做法|方法|run(ning)?\b|运行|执行|build|构建|create|创建|generat|生成|deliver|交付|收尾|之后|交回|review|检查|验收|verify|验证|install|安装|set ?up|publish|发布|output|输出|route|路由|enter|进入|start|启动|plan|规划|draft|起草|write|撰写|edit|编辑|test|测试|debug|调试|fix|修复|export|导出|render|渲染|import|导入|launch|循环|loop|iterate|迭代|对照|还原|命令|commands?|load|加载|resolve|choose|select|选择|decide|判断|ask|询问|confirm|确认|collect|收集|gather|search|搜索|research|调研|analy|分析|compose|合成|record|录制|capture|save|保存|send|发送|share|分享|deploy|部署|update|更新|clean|清理|handoff|交接|finish|完成)/i;
@@ -184,6 +187,61 @@ SV.mod.extract = function (SV) {
   function tableKind(tb) {
     if (!tb.header || tb.header.length < 2) return 'rows';
     return RE_TABLE_COND.test(md.strip(tb.header[0])) && RE_TABLE_ACT.test(md.strip(tb.header.slice(1).join(' '))) ? 'decide' : 'rows';
+  }
+
+  /* 同级且相邻才归组；步骤编号不算选项编号 */
+  function alternativeLabel(title) {
+    const t = md.strip(title);
+    if (NUM_RE.test(t)) return '';
+    const known = t.match(RE_ALTERNATIVE);
+    if (known) return (known[1] || known[2]).toLowerCase();
+    if (/^modes?\s*(?:[A-Z0-9]+\b|[—–:：]|\s-\s)/i.test(t)) return 'mode';
+    if (RE_BACKGROUND.test(t)) return '';
+    const split = t.match(/^(.{1,32}?)\s*(?:[—–:：]|\s-\s)\s*\S/);
+    if (!split) return '';
+    const label = split[1].replace(/\s+(?:\d+|[A-Z]|[一二三四五六七八九十]+)$/i, '').trim().toLowerCase();
+    if (!/^[a-z㐀-鿿][a-z㐀-鿿\s]*$/i.test(label) || RE_REF.test(label) || RE_RULES.test(label) || RE_BACKGROUND.test(label) || /requirements?|amendments?|修订|要求/.test(label) || /^(?:step|phase|stage|part|section|turn|move|tier|tab|level|check|gate|workstream|issue|mandatory|critical|export)\b/i.test(label)) return '';
+    return label;
+  }
+
+  function routerTable(section) {
+    for (const b of section.blocks || []) {
+      if (b.type !== 'table' || !b.rows.length) continue;
+      const h = b.header.map(md.strip);
+      const condition = h.findIndex(c => RE_TABLE_COND.test(c));
+      if (condition < 0) continue;
+      let action = h.findIndex((c, i) => i !== condition && /action|tool|approach|method|helper|use|用法|工具|做法|方法|选项/i.test(c));
+      if (action < 0 && h.some(c => /returns?|结果|返回/i.test(c))) action = h.findIndex((c, i) => i !== condition && !/returns?|结果|返回/i.test(c));
+      if (action >= 0) return { table: b, condition, action };
+    }
+    return null;
+  }
+
+  function choiceSections(sections, lead = '') {
+    const out = [];
+    const sequential = /(?:methods?|approaches?|options?)\s+(?:are\s+)?(?:tried|run|executed|performed)\s+in order|(?:run|execute|perform|complete)\s+(?:all|each)\s+(?:methods?|approaches?|options?)|依次执行|按顺序执行|全部执行/i.test(lead) || sections.some(s => /always\s+(?:runs?|executes?)\s+first|必须先执行/i.test(md.strip(s.title)));
+    for (let i = 0; i < sections.length;) {
+      const label = alternativeLabel(sections[i].title);
+      let end = i + 1;
+      while (label && end < sections.length && sections[end].level === sections[i].level && alternativeLabel(sections[end].title) === label) end++;
+      if (label && end - i >= 2 && !sequential) {
+        const previous = out[out.length - 1];
+        const router = previous && previous.level === sections[i].level && !previous.choice && (RE_ROUTER.test(md.strip(previous.title)) || routerTable(previous)) ? out.pop() : null;
+        out.push({ title: '', level: sections[i].level, blocks: [], subs: [], choice: { sections: sections.slice(i, end), router } });
+        i = end;
+      } else {
+        const s = sections[i++];
+        const background = RE_BACKGROUND.test(md.strip(s.title)) || RE_RULES.test(md.strip(s.title)) || /\b(?:examples?|appendix|reference)\b|示例|附录|参考/.test(md.strip(s.title).toLowerCase());
+        const children = background ? [] : md.sectionize(s.blocks).sections;
+        const nested = children.length ? choiceSections(children, md.blocksToText(s.lead || [])) : [];
+        if (nested.some(c => c.choice)) {
+          // 有选择的父节展开为片段，保留前置说明和后续步骤。
+          if ((s.lead || []).length) out.push({ ...s, blocks: s.lead, subs: [] });
+          out.push(...nested);
+        } else out.push(s);
+      }
+    }
+    return out;
   }
 
   /* 章节里能当节点的条目 */
@@ -331,13 +389,15 @@ SV.mod.extract = function (SV) {
     }
 
     /* —— 章节分类 —— */
-    const secs = doc.sections.map(s => {
+    const secs = choiceSections(doc.sections, md.blocksToText(doc.intro)).map(s => {
       const plain = md.strip(s.title);
       const numbered = NUM_RE.test(plain) && numOf(plain) != null;
       const title = stripNum(plain);
       const its = sectionItems(s);
       let cls;
-      if (RE_TRIGGER.test(title)) cls = RE_NOT.test(title) && /not|不/.test(title) ? 'notuse' : 'trigger';
+      if (s.choice) cls = 'flow';
+      else if (RE_TRIGGER.test(title)) cls = RE_NOT.test(title) ? 'notuse' : 'trigger';
+      else if (RE_BACKGROUND.test(title)) cls = 'ref';
       else if (RE_RULES.test(title) && !numbered) cls = 'rules';
       else if (numbered) cls = 'flow';
       else if (RE_REF.test(title)) cls = 'ref';
@@ -372,7 +432,72 @@ SV.mod.extract = function (SV) {
     const COLORS = ['green', 'blue', 'purple', 'teal', 'rose', 'amber'];
     let colorIdx = 0;
     let singles = null;
-    const sectionSource = x => '## ' + x.s.title + '\n\n' + md.blocksToMd(x.s.blocks);
+    const sourceOfSection = s => '#'.repeat(s.level || 2) + ' ' + s.title + '\n\n' + md.blocksToMd(s.blocks);
+    const sectionSource = x => sourceOfSection(x.s);
+    function choiceLane(choice) {
+      const { sections, router } = choice;
+      const alternatives = sections.map(s => {
+        const node = nodeFrom({ kind: 'section', title: s.title, blocks: s.blocks }, { kind: 'ref' });
+        node.type = 'step';
+        node.alternative = true;
+        node.detail = sourceOfSection(s);
+        delete node.stub;
+        delete node.loopTo;
+        return node;
+      });
+      const table = router && routerTable(router);
+      const nodes = [], links = [], exits = [];
+      if (table) {
+        const { table: tb, condition, action } = table;
+        // 优先用代码中的首个工具调用匹配路由，避免正文提及别的做法时串线。
+        const calls = s => [...String(s).matchAll(/([a-zA-Z_]\w*)\s*\(/g)].map(m => m[1]);
+        const tools = new Set(tb.rows.flatMap(r => calls(r[action])));
+        const params = s => [...String(s).matchAll(/(\w+)\s*=\s*["']([^"']+)["']/g)].map(m => m[1] + '=' + m[2]);
+        const signatures = sections.map(s => {
+          const code = s.blocks.find(b => b.type === 'code');
+          const raw = code ? code.text.replace(/^\s*#.*$/gm, '') : md.blocksToMd(s.blocks);
+          return { primary: calls(raw).find(c => tools.has(c)), params: params(raw), text: md.strip(s.title + ' ' + raw).toLowerCase() };
+        });
+        const covered = new Set();
+        tb.rows.forEach(row => {
+          const target = row[action], helper = calls(target)[0], args = params(target);
+          const scores = signatures.map(sig => {
+            if (helper) return sig.primary === helper ? 10 + args.reduce((n, p) => n + (sig.params.includes(p) ? 4 : -4), 0) : 0;
+            const text = md.strip(target).toLowerCase();
+            return text && sig.text.includes(text) ? 10 + text.length : 0;
+          });
+          const best = Math.max(...scores), matches = scores.map((v, i) => v === best && v > 0 ? i : -1).filter(i => i >= 0);
+          const targetIndex = matches.length === 1 ? matches[0] : -1;
+          const decision = { id: nid(), type: 'decision', title: md.strip(row[condition]).replace(/[?？]+$/, '') + '?', lines: '', icon: '', tag: '', detail: sourceOfSection(router) };
+          nodes.push(decision);
+          if (targetIndex >= 0) {
+            covered.add(targetIndex);
+            links.push({ from: decision.id, to: alternatives[targetIndex].id, kind: 'flow', label: 'Yes' });
+          } else stubs.push({ from: decision.id, text: md.strip(target), label: 'Yes' });
+        });
+        nodes.forEach((n, i) => { if (nodes[i + 1]) links.push({ from: n.id, to: nodes[i + 1].id, kind: 'flow', label: 'No' }); });
+        const remaining = alternatives.filter((n, i) => !covered.has(i));
+        if (remaining.length) {
+          const pick = { id: nid(), type: 'decision', title: T('x.whichApproach'), lines: '', tag: '', icon: '', detail: sections.map(sourceOfSection).join('\n\n') };
+          links.push({ from: nodes[nodes.length - 1].id, to: pick.id, kind: 'flow', label: 'No' });
+          nodes.push(pick);
+          remaining.forEach(n => links.push({ from: pick.id, to: n.id, kind: 'flow', label: n.title }));
+        } else exits.push({ id: nodes[nodes.length - 1].id, label: 'No' });
+      } else {
+        const pick = { id: nid(), type: 'decision', title: T('x.whichApproach'), lines: '', tag: '', icon: '', detail: router ? sourceOfSection(router) : sections.map(sourceOfSection).join('\n\n') };
+        nodes.push(pick);
+        alternatives.forEach(n => links.push({ from: pick.id, to: n.id, kind: 'flow', label: n.title }));
+      }
+      exits.push(...alternatives.map(n => ({ id: n.id, label: '' })));
+      nodes.push(...alternatives);
+      edges.push(...links);
+      return {
+        id: 'L' + (lanes.length + 1), kind: 'flow', color: COLORS[colorIdx++ % COLORS.length],
+        title: T('x.pickApproach', alternatives.length), tag: table ? T('x.firstMatch') : '', nodes, notes: [],
+        source: (router ? [router] : []).concat(sections).map(sourceOfSection).join('\n\n'),
+        choice: { alternatives: alternatives.map(n => n.id), exits },
+      };
+    }
     /* 连续的单步章节合成一条「主流程」泳道；只有一个时不加框，像触发卡片那样单独一行 */
     const flushSingles = () => {
       if (!singles) return;
@@ -388,6 +513,11 @@ SV.mod.extract = function (SV) {
     };
 
     for (const x of secs.filter(x => x.cls === 'flow')) {
+      if (x.s.choice) {
+        flushSingles();
+        lanes.push(choiceLane(x.s.choice));
+        continue;
+      }
       const its = x.its;
       const chained = its.kind === 'subs' || its.kind === 'ol' || its.kind === 'decide' || (its.kind === 'ul' && RE_STRONG_FLOW.test(x.title));
       if (chained && its.items.length >= 2) {
@@ -467,10 +597,20 @@ SV.mod.extract = function (SV) {
       });
     }));
     if (trigger && chain.length) edges.push({ from: 'start', to: chain[0].id, kind: 'flow' });
-    for (let i = 0; i + 1 < chain.length; i++) {
-      const a = chain[i], b = chain[i + 1];
-      edges.push({ from: a.id, to: b.id, kind: 'flow', label: a.type === 'decision' && a.stub ? 'No' : '' });
-    }
+    flowLanes.forEach((lane, li) => {
+      const next = flowLanes[li + 1]?.nodes[0];
+      if (lane.choice) {
+        lane.choice.exits.forEach(exit => {
+          if (next) edges.push({ from: exit.id, to: next.id, kind: 'flow', label: exit.label });
+          else if (exit.label) stubs.push({ from: exit.id, text: T('x.noApproach'), label: exit.label });
+          else lane.nodes.find(n => n.id === exit.id).terminal = true;
+        });
+      } else lane.nodes.forEach((a, i) => {
+        const b = lane.nodes[i + 1] || next;
+        if (b) edges.push({ from: a.id, to: b.id, kind: 'flow', label: a.type === 'decision' && a.stub ? 'No' : '' });
+        else a.terminal = true;
+      });
+    });
     chain.forEach(n => {
       if (n.type === 'decision' && n.stub) stubs.push({ from: n.id, text: n.stub, label: 'Yes' });
       delete n.stub;
@@ -485,7 +625,6 @@ SV.mod.extract = function (SV) {
         delete n.loopTo;
       });
     });
-    if (chain.length) chain[chain.length - 1].terminal = true;
 
     const h1 = doc.title ? md.strip(doc.title) : '';
     const title = h1 || name;

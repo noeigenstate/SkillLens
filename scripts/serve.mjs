@@ -9,6 +9,7 @@ import { fetchOfficial, officialStatus, search, fetchSkill } from './lib/online.
 import { record } from './lib/recorder.mjs';
 import { translate, detectBackend, generateTestCase, getAllCachedTestCases, probeOllama, markForeground, msSinceForeground } from './lib/translate.mjs';
 import { analyze, jobState } from './lib/aiflow.mjs';
+import { explain, explainAvailable } from './lib/explain.mjs';
 
 const argv = process.argv.slice(2);
 const portArg = argv.indexOf('--port');
@@ -66,6 +67,24 @@ const server = http.createServer(async (req, res) => {
       try {
         return send(res, 200, await analyze({ id: String(body.id || ''), name: String(body.name || ''), text: body.text }, { force: body.force === true, peek: body.peek === true }));
       } catch (e) { return send(res, e.status || 500, { error: e.status === 503 ? 'no-llm' : 'aiflow-failed' }); }
+    }
+    // 通俗讲解：一层图一次请求；没有大模型时返回 503，页面退回普通翻译
+    if (url.pathname === '/api/explain' && req.method === 'GET') return send(res, 200, explainAvailable());
+    if (url.pathname === '/api/explain' && req.method === 'POST') {
+      const ac = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+      let body;
+      try { body = JSON.parse(await readBody(req, 2 * 1024 * 1024)); }
+      catch (e) { return send(res, e.status || 400, { error: e.status === 413 ? 'body-too-large' : 'invalid-json' }); }
+      try {
+        return send(res, 200, { ok: true, ...(await explain(body, { signal: ac.signal })) });
+      } catch (e) {
+        if (e.aborted) return;
+        if (e.status === 503) return send(res, 503, { error: 'no-llm' });
+        if (e.status === 400) return send(res, 400, { error: 'bad-request' });
+        console.error('讲解失败：' + e.message);
+        return send(res, 500, { error: 'explain-failed' });
+      }
     }
     if (url.pathname === '/api/ollama' && req.method === 'GET') {
       const ol = await probeOllama(true);
@@ -171,6 +190,10 @@ const server = http.createServer(async (req, res) => {
     send(res, 500, { ok: false, error: e.message });
   }
 });
+
+// 页面常复用连接，等大模型的几十秒里别让服务端先把空闲连接关了
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 70000;
 
 server.on('error', e => {
   if (e.code !== 'EADDRINUSE') throw e;

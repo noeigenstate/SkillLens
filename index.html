@@ -130,7 +130,7 @@
   <div class="modal" id="pasteModal" hidden>
     <div class="modal-card">
       <h3 data-t="paste.title">Paste SKILL.md content</h3>
-      <textarea class="editor" id="pasteText" spellcheck="false" placeholder="---&#10;name: my-skill&#10;description: …&#10;---&#10;&#10;# Title&#10;&#10;## Workflow&#10;&#10;1. …"></textarea>
+      <textarea class="editor" id="pasteText" spellcheck="false" data-t-ph="paste.ph" placeholder="---&#10;name: my-skill&#10;description: …&#10;---&#10;&#10;# Title&#10;&#10;## Workflow&#10;&#10;1. …"></textarea>
       <div class="row-btns">
         <button class="btn" data-close data-t="paste.cancel">Cancel</button>
         <button class="btn primary" id="btnPasteOk"><i data-icon="check"></i><span data-t="paste.ok">Visualize</span></button>
@@ -146,6 +146,7 @@
   <script src="src/extract.js"></script>
   <script src="src/dsl.js"></script>
   <script src="src/hier.js"></script>
+  <script src="src/explain.js"></script>
   <script src="src/layout.js"></script>
   <script src="src/render.js"></script>
   <script src="data/skills.js" onerror="window.SV_DATA = window.SV_DATA || null"></script>

@@ -24,7 +24,8 @@
     web: { q: '', items: null, busy: false, error: '' }, official: [], officialBusy: false,
     lang: params.get('lang') || store.get('lang2', 'zh'),
     motion: RECORD ? (params.get('motion') === 'flat' || params.get('motion') === 'minimal' ? 'flat' : '3d') : motionSetting(store.get('motion', '3d')), panning: false,
-    translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, total: 0, missing: 0, busy: false, error: '' }, showOrig: false,
+    translate: store.get('translate', true), rawSpec: null, trInfo: { any: false, total: 0, missing: 0, busy: false, error: '' }, showOrig: false, showSrc: false,
+    plain: store.get('plain', true),
     aiChoices: store.get('aiChoices', {}),
   };
   SV.i18n.set(state.lang);
@@ -47,6 +48,8 @@
     store.set('lang2', state.lang);
     trAbort('list');
     trAbort('detail');
+    exPrefetchStop();
+    if (EX.visible) { EX.visible.release(); EX.visible = null; }
     applyLang();
     renderList();
     if (state.currentId) select(state.currentId, true); else renderHeader();
@@ -252,13 +255,16 @@
     'google-sheets': 'Google 表格',
     'google-slides': 'Google 幻灯片',
   };
-  /* 只认上面这张表（精确匹配），不再按单词拼凑中文名 */
+  /* 中文名：先查上面这张手写表（精确匹配，不按单词拼凑），再用服务端按功能描述起的名字（缓存在 EX.names），都没有就显示原名 */
+  const curatedName = raw => {
+    for (const k of [raw, raw.toLowerCase()]) if (Object.prototype.hasOwnProperty.call(ZH_SKILL_NAMES, k)) return ZH_SKILL_NAMES[k];
+    return '';
+  };
   function skillDisplayName(s) {
     if (!s) return '';
     const raw = String(s.name || '');
     if (state.lang !== 'zh' || !state.translate) return raw;
-    for (const k of [raw, raw.toLowerCase()]) if (Object.prototype.hasOwnProperty.call(ZH_SKILL_NAMES, k)) return ZH_SKILL_NAMES[k];
-    return raw;
+    return curatedName(raw) || EX.names[s.id] || raw;
   }
   /* 译文里的少量措辞统一。只用在译文上（TR.cache 命中的），原文不动；
      行内代码、含 / \ . _ : ~ @ # 的片段（路径、文件名、命令、网址）一律跳过 */
@@ -276,13 +282,13 @@
   }
 
   /* 列表里的一行描述也跟随界面语言（服务模式下自动翻译并缓存）。只有译文才做措辞统一，原文不动 */
-  function listDesc(s) {
-    const d = s.description || s.path || '';
+  function listText(d) {
     if (!state.translate || !needsTr(d, state.lang)) return d;
     const hit = TR.cache[trKey(state.lang, d)];
     if (hit == null) return d;
     return state.lang === 'zh' ? zhPolishText(hit) : hit;
   }
+  const listDesc = s => listText(s.description || s.path || '');
   /* 只翻译看得见的（展开的分组、搜索结果），上千条描述不会一次全送去翻译。
      防抖一下；看得见的内容变了就取消上一批、按新的顺序重来（list 通道只留一个请求） */
   let descTimer = 0;
@@ -291,7 +297,8 @@
     if (!state.translate) return;
     descTimer = setTimeout(() => {
       const lang = state.lang;
-      const miss = [...new Set(items.map(s => s.description).filter(d => d && needsTr(d, lang) && TR.cache[trKey(lang, d)] == null))].slice(0, 200);
+      const webItems = state.web.items && state.web.q === state.query.trim().toLowerCase() ? state.web.items : [];
+      const miss = [...new Set(items.concat(webItems).map(s => s.description).filter(d => d && needsTr(d, lang) && TR.cache[trKey(lang, d)] == null))].slice(0, 200);
       if (miss.length) requestTr(miss, { channel: 'list', done: () => { if (state.lang === lang) { renderList(); renderDetail(); } } });
     }, 250);
   }
@@ -308,8 +315,11 @@
     const edited = !!state.overrides[s.id];
     const also = s.alsoIn && s.alsoIn.length ? `<i class="badge also" title="${esc(t('list.alsoIn', s.alsoIn.map(whereName).join(t('list.sep'))))}">+${s.alsoIn.length}</i>` : '';
     const removable = s.source === 'import' || s.source === 'online';
+    // 中文界面里有了中文名，真实名称（slug）缩成小字放在名字下面
+    const disp = skillDisplayName(s);
+    const slug = s.name && disp !== s.name ? `<div class="slug">${esc(s.name)}</div>` : '';
     return `<button class="item${s.id === state.currentId ? ' active' : ''}" data-id="${esc(s.id)}" title="${esc(s.full || s.path || '')}">
-      <div class="name"><span>${esc(skillDisplayName(s))}</span>${flow ? `<i class="badge flow">${t('badge.flow')}</i>` : ''}${edited ? `<i class="badge edit">${t('badge.edited')}</i>` : ''}${also}</div>
+      <div class="name"><span>${esc(disp)}</span>${flow ? `<i class="badge flow">${t('badge.flow')}</i>` : ''}${edited ? `<i class="badge edit">${t('badge.edited')}</i>` : ''}${also}</div>${slug}
       <div class="desc">${esc(listDesc(s))}</div>
       ${removable ? `<span class="del" data-del="${esc(s.id)}" title="${t('list.remove')}">${iconSvg('x', 14)}</span>` : ''}
     </button>`;
@@ -333,6 +343,7 @@
       </div>`;
     }).join('');
     el.innerHTML = html + onlineHtml(q);
+    scheduleNames();
   }
 
   /* —— 网上的 skill：搜索公开目录、下载官方库（要本地服务） —— */
@@ -347,7 +358,7 @@
           const meta = [it.repo, it.installs ? t('online.installs', it.installs.toLocaleString()) : '', it.stars ? '★ ' + it.stars.toLocaleString() : ''].filter(Boolean).join(' · ');
           return `<button class="item" data-web="${i}" title="${esc(it.repo + (it.path ? '/' + it.path : ''))}">
             <div class="name"><span>${esc(it.name)}</span>${w.picking === i ? `<i class="badge">${t('online.fetching')}</i>` : ''}</div>
-            <div class="desc">${esc(meta)}</div>${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
+            <div class="desc">${esc(meta)}</div>${it.description ? `<div class="desc">${esc(listText(it.description))}</div>` : ''}
           </button>`;
         }).join('') : `<div class="list-empty">${t('online.none')}</div>`;
         out += '</div></div>';
@@ -457,6 +468,7 @@
     trAbort('detail');
     state.selected = null;
     state.showOrig = false;
+    state.showSrc = false;
     buildSpec(s);
     writeView(false);
     draw();
@@ -465,6 +477,7 @@
     renderDetail();
     renderStruct();
   }
+  const aiLabel = label => label === 'Coverage sweep' ? t('ai.label.sweep') : label === 'Branch choices' ? t('ai.label.branch') : label ? phaseText(label) : '';
   function renderAiUi() {
     const chip = $('#aiFlow'), s = findSkill(state.currentId), entry = aiEntry(s), job = entry && entry.job;
     if (!chip) return;
@@ -475,7 +488,7 @@
     chip.classList.toggle('busy', !!busy);
     chip.classList.toggle('retry', !!(job && job.state === 'error'));
     const disabled = edited ? ' disabled' : '';
-    if (busy) chip.innerHTML = `<button disabled>${esc(t('ai.progress', job.step, job.total == null ? '…' : job.total, job.label || ''))}</button>`;
+    if (busy) chip.innerHTML = `<button disabled>${esc(t('ai.progress', job.step, job.total == null ? '…' : job.total, aiLabel(job.label)))}</button>`;
     else if (job && job.state === 'done') {
       const ai = !edited && state.aiChoices[s.id] !== 'rules';
       chip.innerHTML = `<button data-ai="rules" aria-pressed="${!ai}"${disabled}>${t('ai.rules')}</button><span aria-hidden="true">|</span><button data-ai="ai" aria-pressed="${ai}"${disabled}>${t('ai.name')}</button>`;
@@ -614,6 +627,7 @@
     trAbort('detail');
     state.selected = null;
     state.showOrig = false;
+    state.showSrc = false;
     state.view.phase = phase;
     state.zoom = 'fit';
     state.panning = false;
@@ -648,6 +662,7 @@
   function phaseText(text) {
     return state.translate ? TR.cache[trKey(state.lang, text)] || text : text;
   }
+  const phaseName = p => exPhaseTitle(p.id) || phaseText(p.title);
   function phaseBadge(phase) {
     const node = state.hier.overview.lanes.flatMap(l => l.nodes).find(n => n.id === phase.id);
     return node && node.tag || phase.badge;
@@ -657,6 +672,7 @@
   /* 精确匹配，对所有技能生效，所以只留通用的单词，译法是直译；技能专属的整句、产品名一律交给翻译服务 / 已有译文 */
   const ZH_TERMS = {
     'When': '何时',
+    'End': '结束',
     'Trigger': '触发条件',
     'extract': '提取',
     'export': '导出',
@@ -716,25 +732,36 @@
     (spec.edges || []).forEach(e => field(e, 'label', 4));
     (spec.stubs || []).forEach(x => { field(x, 'text', 4); field(x, 'label', 4); });
   }
-  /* 用缓存里已有的译文生成要显示的图：返回 { spec, any, total（要翻译的字数）, missing（还没译出来的，按显示优先级排好） } */
-  function translateSpec(raw, lang) {
+  /* 用讲解、再用缓存里已有的译文生成要显示的图（优先级：讲解 > 译文 > 原文）。
+     ex 是 exLookup 的结果：done 就把讲解套上，被覆盖的文字不翻译；pending / todo 时，讲解要接管的文字先不进翻译队列。
+     返回 { spec, any, total（要翻译的字数）, missing（还没译出来的，按显示优先级排好）, covered（讲解覆盖了多少段文字） } */
+  function translateSpec(raw, lang, ex) {
     const spec = JSON.parse(JSON.stringify(raw));
     const rank = new Map();
     const seen = new Set();
-    let any = false;
+    let any = false, covered = null, hold = null;
+    // 没有一级标题的技能，图上的大标题就是英文 slug：中文界面里换成中文名
+    if (lang === 'zh' && state.translate && !spec.phase && typeof spec.title === 'string') {
+      const cur = findSkill(state.currentId), shown = cur && skillDisplayName(cur);
+      if (cur && shown !== cur.name && sameName(spec.title, cur.name)) spec.title = shown;
+    }
+    if (ex && ex.status === 'done') covered = SV.explain.apply(spec, ex.result, exContext(raw));
+    else if (ex && (ex.status === 'pending' || ex.status === 'todo') && !ex.released) hold = SV.explain.scope(spec, ex.info.pl);
     eachText(spec, (s, r) => {
+      if (covered && covered.has(s)) return undefined;
       if (lang === 'zh' && state.translate && isTerm(s)) { any = true; return ZH_TERMS[s]; }
       if (!needsTr(s, lang)) return undefined;
       any = true;
       if (!state.translate) return undefined;
-      seen.add(s);
       const hit = TR.cache[trKey(lang, s)];
+      if (hold && hold.has(s)) return hit != null ? (lang === 'zh' ? zhPolishText(hit) : hit) : undefined;
+      seen.add(s);
       if (hit != null) return lang === 'zh' ? zhPolishText(hit) : hit;
       if (!rank.has(s) || r < rank.get(s)) rank.set(s, r);
       return undefined;
     });
     const missing = [...rank.keys()].sort((a, b) => rank.get(a) - rank.get(b));
-    return { spec, any, total: seen.size, missing };
+    return { spec, any, total: seen.size, missing, covered: covered ? covered.size : 0 };
   }
   function useTranslation(isExplicit = false) {
     const raw = state.rawSpec;
@@ -742,9 +769,13 @@
     const lang = state.lang;
     trAbort('graph'); // 换了技能 / 语言 / 图：旧的批次不再发
     redrawCancel();
-    const r = translateSpec(raw, lang);
+    if (EX.preRunning && EX.preTag !== state.currentId + '|' + lang) exPrefetchStop();
+    const ex = exLookup(raw, lang);
+    const r = translateSpec(raw, lang, ex);
     state.spec = r.spec;
-    Object.assign(state.trInfo, { any: r.any, total: r.total, missing: r.missing.length, busy: false, error: '' });
+    Object.assign(state.trInfo, { any: r.any, total: r.total, missing: r.missing.length, busy: false, error: '', ex: ex.status, exFailed: ex.failed || 0, exCovered: r.covered });
+    if ((ex.status === 'todo' || ex.status === 'pending') && !(EX.visible && EX.visible.key === ex.info.key)) exStart(raw, lang);
+    else if (ex.status === 'done') exPrefetchStart(lang);
     if (r.missing.length) graphPass(raw, lang, r.missing, isExplicit).catch(e => console.error(e));
     renderTrUi();
   }
@@ -753,6 +784,235 @@
     if (!state.server) return (TR.backend = null);
     try { TR.backend = (await (await fetch('api/translate', { cache: 'no-store' })).json()).backend || null; } catch { TR.backend = null; }
     return TR.backend;
+  }
+
+  /* —— 通俗讲解：当前看到的这一层（总览或某个阶段）由服务端用大白话重新讲一遍 ——
+     文字优先级：讲解 > 译文 > 原文。讲解覆盖的文字不再送去翻译；讲解回来之前，这些文字先显示已有的译文或原文 */
+  const EX = {
+    backend: undefined, // true 有大模型；false 服务端说没有（只用于隐藏面板里的开关）
+    downUntil: 0, // 没有大模型时，这个时间之前不再试
+    results: new Map(), // 页面键 → 服务端返回
+    jobs: new Map(), // 页面键 → 进行中的请求
+    failedAt: new Map(), // 页面键 → 失败时间（一分钟内不重试）
+    released: new Set(), // 等太久、已放开翻译的键
+    memo: new WeakMap(), // 图对象 → 请求体
+    visible: null, pre: null, preTag: '', preRunning: false, epoch: 0,
+    names: {}, namesTried: new Set(), namesBusy: false,
+  };
+  const plainActive = () => state.plain && state.translate;
+  const plainOn = () => plainActive() && state.server && !RECORD && EX.downUntil <= Date.now();
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  function exInfo(raw, lang) {
+    let m = EX.memo.get(raw);
+    if (m && m.lang === lang && m.skillId === state.currentId) return m;
+    const s = findSkill(state.currentId);
+    const parts = {};
+    // 总览里的阶段只给了一句摘要，把阶段里的步骤标题也交给模型，它才知道里面有什么
+    if (!raw.phase && state.hier && state.fullSpec) {
+      const byId = new Map(state.fullSpec.lanes.flatMap(l => l.nodes || []).map(n => [n.id, n]));
+      state.hier.phases.forEach(p => {
+        if (p.nodeIds.length > 1) parts[p.id] = p.nodeIds.map(id => byId.get(id) && byId.get(id).title).filter(Boolean);
+      });
+    }
+    const pl = SV.explain.payload(raw, { lang, skill: { name: s ? s.name : '', description: s ? s.description : '' }, parts });
+    m = { lang, skillId: state.currentId, pl, key: SV.explain.keyOf(pl) };
+    EX.memo.set(raw, m);
+    return m;
+  }
+  /* 这一层的讲解状态：off 没开 · none 没有可讲的节点 · done 有结果 · failed 刚失败 · pending 在路上 · todo 还没请求 */
+  function exLookup(raw, lang) {
+    if (!raw || !plainOn()) return { status: 'off' };
+    const info = exInfo(raw, lang);
+    if (!info.pl) return { status: 'none' };
+    const result = EX.results.get(info.key);
+    if (result) return { status: 'done', result, info, failed: (result.failed || []).length };
+    const failedAt = EX.failedAt.get(info.key);
+    if (failedAt && Date.now() - failedAt < 60000) return { status: 'failed', info };
+    return { status: EX.jobs.has(info.key) ? 'pending' : 'todo', info, released: EX.released.has(info.key) };
+  }
+  /* 阶段详情里用总览讲过的阶段名，上一步 / 下一步的名字和总览保持一致 */
+  function exContext(raw) {
+    if (!raw.phase || !state.hier) return {};
+    const ov = EX.results.get(exInfo(state.hier.overview, state.lang).key);
+    if (!ov) return {};
+    const nodes = ov.nodes || {};
+    const title = id => (nodes[id] && nodes[id].title) || '';
+    const flow = state.hier.phases.filter(p => p.kind === 'flow');
+    const i = flow.findIndex(p => p.id === raw.phase);
+    const ctx = { phaseTitle: title(raw.phase), fromTitle: i > 0 ? title(flow[i - 1].id) : '', stubs: {} };
+    flow.forEach((p, j) => {
+      const next = flow[j + 1];
+      if (next && title(next.id)) ctx.stubs[SV.i18n.t('hier.next', next.title)] = SV.i18n.t('hier.next', title(next.id));
+    });
+    return ctx;
+  }
+  /* 总览里讲过的阶段名（没有就空）：给列表、翻页提示用 */
+  function exPhaseTitle(id) {
+    if (!state.hier || !plainOn()) return '';
+    const ov = EX.results.get(exInfo(state.hier.overview, state.lang).key);
+    return SV.explain.bare((ov && ov.nodes && ov.nodes[id] && ov.nodes[id].title) || '');
+  }
+
+  /* 请求带引用计数：可见层和预取可以共用同一个请求，都放手了才真正中止 */
+  function exAcquire(raw, lang, priority) {
+    const info = exInfo(raw, lang);
+    let job = EX.jobs.get(info.key);
+    if (!job) {
+      const ctrl = new AbortController();
+      job = { key: info.key, refs: 0, ctrl, done: false, priority };
+      job.promise = new Promise(resolve => {
+        job.finish = res => {
+          if (job.done) return;
+          job.done = true;
+          if (EX.jobs.get(info.key) === job) EX.jobs.delete(info.key);
+          resolve(res);
+        };
+      });
+      job.send = async (level, retry = true) => {
+        try {
+          const r = await fetch('api/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal, body: JSON.stringify({ ...info.pl, priority: level }) });
+          if (r.status === 503) { EX.downUntil = Date.now() + 60000; EX.backend = false; return job.finish({ ok: false, reason: 'no-llm' }); }
+          const j = await r.json().catch(() => null);
+          if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || r.statusText || 'HTTP ' + r.status);
+          EX.backend = true;
+          EX.failedAt.delete(info.key);
+          EX.results.set(info.key, j);
+          job.finish({ ok: true, result: j });
+        } catch (e) {
+          if (e && e.name === 'AbortError') return job.finish({ ok: false, reason: 'aborted' });
+          // 连接刚好被服务端关掉（复用了空闲连接）：马上再来一次
+          if (retry && e instanceof TypeError && !ctrl.signal.aborted) return job.send(level, false);
+          EX.failedAt.set(info.key, Date.now());
+          job.finish({ ok: false, reason: 'error', error: (e && e.message) || String(e) });
+        }
+      };
+      EX.jobs.set(info.key, job);
+      job.send(priority);
+    } else if (priority === 'high' && job.priority === 'low') {
+      // 后台预取的这一层被用户点开了：再发一次高优先级请求，服务端按同一个键合并并把优先级升上去
+      job.priority = 'high';
+      job.send('high');
+    }
+    job.refs++;
+    let left = false;
+    return {
+      key: info.key, promise: job.promise,
+      release() {
+        if (left) return;
+        left = true;
+        if (--job.refs <= 0 && !job.done) {
+          if (EX.jobs.get(job.key) === job) EX.jobs.delete(job.key);
+          job.ctrl.abort();
+        }
+      },
+    };
+  }
+  function exSettled(raw, lang) {
+    if (state.lang !== lang || !state.rawSpec) return;
+    if (state.rawSpec !== raw && exInfo(state.rawSpec, lang).key !== exInfo(raw, lang).key) return;
+    useTranslation();
+    redrawTr(true);
+  }
+  function exStart(raw, lang) {
+    const info = exInfo(raw, lang);
+    if (EX.visible && EX.visible.key === info.key) return;
+    const handle = exAcquire(raw, lang, 'high');
+    if (EX.visible) EX.visible.release();
+    exPrefetchStop();
+    EX.visible = handle;
+    // 等了很久还没回来：先放开翻译，别让整张图一直停在外文；讲解回来后再覆盖
+    const valve = setTimeout(() => {
+      if (EX.visible !== handle || EX.results.has(handle.key)) return;
+      EX.released.add(handle.key);
+      if (state.rawSpec && exInfo(state.rawSpec, lang).key === handle.key) useTranslation();
+    }, 45000);
+    handle.promise.then(res => {
+      clearTimeout(valve);
+      if (EX.visible === handle) EX.visible = null;
+      if (res.reason === 'aborted') return;
+      exSettled(raw, lang);
+      if (res.ok) exPrefetchStart(lang);
+    });
+  }
+  /* 看完这一层后，在后台低优先级把其他阶段（和没看过的总览）也讲好，打开时就是现成的 */
+  function exPrefetchStop() {
+    EX.epoch++;
+    EX.preRunning = false;
+    if (EX.pre) { EX.pre.release(); EX.pre = null; }
+  }
+  function exPrefetchStart(lang) {
+    if (!plainOn() || !state.hier) return;
+    const tag = state.currentId + '|' + lang;
+    if (EX.preRunning && EX.preTag === tag) return;
+    exPrefetchStop();
+    const epoch = EX.epoch, hier = state.hier, skillId = state.currentId;
+    EX.preTag = tag;
+    EX.preRunning = true;
+    const targets = [];
+    if (state.view.phase) targets.push(() => hier.overview);
+    hier.phases.filter(p => p.kind === 'flow' && p.drill && p.id !== state.view.phase).forEach(p => targets.push(() => hier.detail(p.id)));
+    (async () => {
+      try {
+        await delay(1500);
+        for (const make of targets) {
+          if (epoch !== EX.epoch || state.currentId !== skillId || !plainOn()) return;
+          const raw = make(), info = exInfo(raw, lang);
+          if (!info.pl || EX.results.has(info.key)) continue;
+          const handle = exAcquire(raw, lang, 'low');
+          EX.pre = handle;
+          const res = await handle.promise;
+          handle.release();
+          if (EX.pre === handle) EX.pre = null;
+          if (epoch !== EX.epoch) return;
+          if (!res.ok) { if (res.reason === 'no-llm') return; continue; }
+          // 回来的是总览、而用户正在看某个阶段：阶段名用上总览的讲解
+          if (raw === hier.overview && state.view.phase && state.hier === hier) { useTranslation(); redrawTr(true); }
+        }
+      } finally { if (epoch === EX.epoch) EX.preRunning = false; }
+    })();
+  }
+
+  /* 列表里的中文名：只给看得见的条目起名（展开的分组、搜索结果），服务端按功能描述起，结果缓存 */
+  const hasHan = s => /[㐀-鿿]/.test(s);
+  const namesOn = () => state.lang === 'zh' && state.translate && state.server && !RECORD && EX.backend !== false && EX.downUntil <= Date.now();
+  let namesTimer = 0;
+  function scheduleNames() {
+    clearTimeout(namesTimer);
+    if (!namesOn()) return;
+    namesTimer = setTimeout(() => {
+      const box = $('#list');
+      if (!box || !namesOn() || EX.namesBusy) return;
+      const r = box.getBoundingClientRect();
+      const ids = Array.from(box.querySelectorAll('.item[data-id]')).filter(el => {
+        const b = el.getBoundingClientRect();
+        return b.bottom > r.top - 240 && b.top < r.bottom + 240;
+      }).map(el => el.dataset.id);
+      const items = ids.map(findSkill).filter(s => s && s.name && !hasHan(s.name) && !curatedName(s.name) && EX.names[s.id] === undefined && !EX.namesTried.has(s.id));
+      if (items.length) loadNames(items.slice(0, 40));
+    }, 500);
+  }
+  async function loadNames(items) {
+    EX.namesBusy = true;
+    const lang = state.lang;
+    try {
+      for (let i = 0; i < items.length && state.lang === lang && namesOn(); i += 20) {
+        const batch = items.slice(i, i + 20);
+        batch.forEach(s => EX.namesTried.add(s.id));
+        const r = await fetch('api/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang: 'zh', level: 'names', skills: batch.map(s => ({ id: s.id, name: s.name, description: s.description || '' })) }) });
+        if (r.status === 503) { EX.backend = false; EX.downUntil = Date.now() + 60000; return; }
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j || !j.ok) continue;
+        EX.backend = true;
+        Object.assign(EX.names, j.names || {});
+        if (state.lang === lang) renderList();
+        // 正在看的这个技能刚好有了中文名：标题和顶栏跟着换
+        if (state.lang === lang && state.currentId && j.names && j.names[state.currentId] && state.rawSpec) { useTranslation(); redrawTr(true); }
+      }
+    } catch { /* 下次滚动时再试 */ } finally {
+      EX.namesBusy = false;
+      scheduleNames();
+    }
   }
 
   /* —— 请求通道：新请求取消同通道的旧请求（中止网络请求 + 丢掉还没发的批次 + 释放它占着的 key） —— */
@@ -874,9 +1134,10 @@
   /* 把缓存里已有的译文套进当前图（不发请求）：更新状态条，并（节流地）重画 */
   function applyTr(raw, lang, final) {
     if (state.rawSpec !== raw || state.lang !== lang) return;
-    const r = translateSpec(raw, lang);
+    const ex = exLookup(raw, lang);
+    const r = translateSpec(raw, lang, ex);
     state.spec = r.spec;
-    Object.assign(state.trInfo, { any: r.any, total: r.total, missing: r.missing.length });
+    Object.assign(state.trInfo, { any: r.any, total: r.total, missing: r.missing.length, ex: ex.status, exFailed: ex.failed || 0, exCovered: r.covered });
     renderTrUi();
     redrawTr(final);
   }
@@ -912,22 +1173,47 @@
     const btn = $('#btnTrans'), chip = $('#trStatus');
     if (!btn || !chip) return;
     const info = state.trInfo;
-    btn.hidden = !info.any;
+    const exWait = info.ex === 'pending' || info.ex === 'todo'; // 讲解还在整理
+    btn.hidden = !info.any && !exWait && info.ex !== 'done';
     btn.setAttribute('aria-pressed', String(state.translate));
     let text = '', tip = '', retry = false;
-    if (info.any && state.translate) {
-      if (info.busy) text = t('tr.progress', Math.max(0, info.total - info.missing), info.total);
-      else if (info.missing) {
-        text = t('tr.left', info.missing);
-        tip = (info.error || (TR.backend === null ? t('tr.noBackend') : t('tr.someFail'))) + ' · ' + t('tr.retry');
-        retry = true;
-      } else text = t('tr.done');
-    }
+    const trOn = info.any && state.translate;
+    if (exWait) { text = t('ex.progress'); tip = t('ex.progressTip'); }
+    if (trOn && info.busy) {
+      const p = t('tr.progress', Math.max(0, info.total - info.missing), info.total);
+      text = text ? text + ' · ' + p : p;
+    } else if (!exWait && trOn && info.missing) {
+      text = t('tr.left', info.missing);
+      tip = (info.error || (TR.backend === null ? t('tr.noBackend') : t('tr.someFail'))) + ' · ' + t('tr.retry');
+      retry = true;
+    } else if (!exWait && info.ex === 'failed') {
+      text = t('ex.failed');
+      tip = t('ex.failedTip') + ' · ' + t('tr.retry');
+      retry = true;
+    } else if (!exWait && info.ex === 'done') {
+      text = info.exFailed ? t('ex.partial', info.exFailed) : t('ex.done');
+      tip = info.exFailed ? t('ex.partialTip') : t('ex.doneTip');
+    } else if (!exWait && trOn) text = t('tr.done');
     chip.textContent = text;
     chip.title = tip;
     chip.hidden = !text;
-    chip.classList.toggle('busy', !!info.busy);
+    chip.classList.toggle('busy', !!info.busy || exWait);
     chip.classList.toggle('retry', retry);
+  }
+
+  /* 右侧面板的「通俗讲解 / 原文措辞」。选通俗讲解时译文也一并打开（讲解本身就是目标语言） */
+  function setPlain(on) {
+    if (plainActive() === on) return;
+    state.plain = on;
+    if (on) state.translate = true;
+    store.set('plain', state.plain);
+    store.set('translate', state.translate);
+    if (!on) exPrefetchStop();
+    useTranslation();
+    draw(true);
+    renderHeader();
+    renderDetail();
+    renderList();
   }
 
   function select(id, keepSel, phase = null) {
@@ -938,7 +1224,7 @@
     const same = state.currentId === id;
     if (!keepSel || !same) { state.view.phase = phase; state.zoom = 'fit'; }
     state.currentId = id;
-    if (!keepSel) { state.selected = null; state.showOrig = false; }
+    if (!keepSel) { state.selected = null; state.showOrig = false; state.showSrc = false; }
     if (!RECORD) {
       store.set('last', id);
     }
@@ -1001,13 +1287,11 @@
     applyZoom();
   }
 
-  const ZH_FM_KEYS = {
-    license: '许可协议',
-    'allowed-tools': '可用工具',
-    compatibility: '兼容环境',
-    metadata: '附加信息',
-    version: '版本号',
-    author: '作者',
+  /* 技能文档开头的配置项：有译名的显示译名（原名缩成小字），true / false 显示成是 / 否 */
+  const fmLabel = k => SV.i18n.has('fm.' + k) ? t('fm.' + k) : k;
+  const fmValue = v => {
+    const one = x => /^true$/i.test(String(x).trim()) ? t('label.yes') : /^false$/i.test(String(x).trim()) ? t('label.no') : String(x);
+    return Array.isArray(v) ? v.map(one).join(', ') : v && typeof v === 'object' ? JSON.stringify(v) : one(v);
   };
   /* 顶栏：标题 + 真实名称（slug）小字；悬停看完整路径。title 和真实名称差不多时不重复 */
   const sameName = (a, b) => { const n = x => String(x || '').toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]+/g, ''); return n(a) === n(b); };
@@ -1052,7 +1336,7 @@
       const b = $(sel);
       b.disabled = !p;
       b.dataset.go = p ? p.id : '';
-      b.title = p ? phaseText(p.title) : '';
+      b.title = p ? phaseName(p) : '';
     });
   }
 
@@ -1549,7 +1833,7 @@
   function phaseListHtml(group, titleKey) {
     const list = state.hier ? state.hier.phases.filter(p => group === 'flow' ? p.kind === 'flow' : p.kind !== 'flow' && p.drill) : [];
     if (!list.length) return '';
-    return `<div class="section-title">${t(titleKey)}</div><div class="links phase-list">${list.map(p => `<button ${p.drill ? `data-phase="${p.id}"` : `data-goto="${p.id}"`}><span>${esc(phaseText(p.title))}</span><small>${esc(p.badge)}</small>${p.drill ? ' ›' : ''}</button>`).join('')}</div>`;
+    return `<div class="section-title">${t(titleKey)}</div><div class="links phase-list">${list.map(p => `<button ${p.drill ? `data-phase="${p.id}"` : `data-goto="${p.id}"`}><span>${esc(phaseName(p))}</span><small>${esc(p.badge)}</small>${p.drill ? ' ›' : ''}</button>`).join('')}</div>`;
   }
 
   function renderDetail() {
@@ -1578,27 +1862,29 @@
         return `<button data-goto="${esc(id)}" data-read-row="${edge ? edge.id : ''}"><span class="read-dot" aria-hidden="true"></span><span class="read-copy">${esc(title(id))}${folded ? `<span class="read-files">${esc(folded)}</span>` : ''}</span>${isRef ? `<small class="read-no">${String(nodeNo[id]).padStart(2, '0')}</small>` : ''}</button>`;
       };
       const lines = Array.isArray(n.lines) ? n.lines.join('\n') : (n.lines || '');
+      const exn = n.ex;
       el.innerHTML = `
+        ${plainToggleHtml()}
         <button class="btn ghost" data-goto="" style="margin:-6px 0 8px -8px">${iconSvg('chevron-left', 14)}${t('detail.back')}</button>
         <h3>${esc(n.title)}</h3>
         ${n.quoted === false ? `<div class="warn">${t('ai.unquoted')}</div>` : ''}
         <div class="meta"><span class="badge">${t('type.' + (n.type || 'step'))}</span>${n.optional ? `<span class="badge">${t('detail.optional')}</span>` : ''}${n.tag ? `<span>${esc(n.tag)}</span>` : ''}${lane ? `<span>· ${esc(lane.title)}</span>` : ''}</div>
         ${isRef && n.path ? `<dl class="kv"><dt>${t('detail.path')}</dt><dd><code class="path">${esc(n.path)}</code></dd></dl>` : ''}
-        ${lines ? `<div class="md"><p>${esc(lines).replace(/\n/g, '<br>')}</p></div>` : ''}
+        ${exn ? exBlocks([[n.type === 'trigger' ? 'ex.trigger' : 'ex.what', exn.explain], ['ex.why', exn.why, 'why'], ['ex.watch', exn.watch, 'watch']]) : lines ? `<div class="md"><p>${esc(lines).replace(/\n/g, '<br>')}</p></div>` : ''}
         ${ins.length ? `<div class="section-title">${t('detail.from')}</div><div class="links">${ins.map(e => link(e.from, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'in')).join('')}</div>` : ''}
         ${outs.length || stubs.length ? `<div class="section-title">${t('detail.to')}</div><div class="links">${outs.map(e => link(e.to, (e.kind === 'loop' ? t('detail.loop') + ' ' : '') + (e.label || ''), 'out')).join('')}${stubs.map(x => `<button disabled>${iconSvg('chevron-right', 14)}${esc(x.text)}<small>${esc(x.label || t('detail.exit'))}</small></button>`).join('')}</div>` : ''}
         ${reads.length ? `<div class="section-title read-title" style="--read-color:${readColor}">${readGlyph}${t(isRef ? 'detail.usedBy' : 'detail.reads')}</div><div class="links read-links" style="--read-color:${readColor}">${reads.map(readLink).join('')}</div>` : ''}
-        ${n.detail ? `<div class="section-title">${t('detail.original')}${trToggle(n.detail)}</div><div class="md">${detailHtml(n.detail)}</div>` : ''}`;
+        ${n.detail ? sourceHtml(n.detail, !!exn) : ''}`;
       return;
     }
     const phase = state.hier && state.hier.phases.find(p => p.id === state.view.phase);
     if (phase) {
       const refs = sp.lanes.filter(l => l.kind === 'ref').flatMap(l => l.nodes);
       const source = state.rawSpec.source || '';
-      el.innerHTML = `<h3>${esc(sp.title)}</h3><div class="meta"><span class="badge">${esc(phaseBadge(phase))}</span></div>
-        <div class="md"><p>${esc(sp.subtitle || '')}</p></div>
+      el.innerHTML = `${plainToggleHtml()}<h3>${esc(sp.title)}</h3><div class="meta"><span class="badge">${esc(phaseBadge(phase))}</span></div>
+        ${sp.ex ? exBlocks([['ex.phaseWhat', sp.ex.what]]) : `<div class="md"><p>${esc(sp.subtitle || '')}</p></div>`}
         ${refs.length ? `<div class="section-title">${t('detail.reads')}</div><div class="links ref-list">${refs.map(n => `<button data-goto="${esc(n.id)}"${n.path ? ` title="${esc(n.path)}"` : ''}>${esc(n.title)}${n.path ? `<small>${esc(n.path)}</small>` : ''}</button>`).join('')}</div>` : ''}
-        ${source ? `<div class="section-title">${t('detail.original')}${trToggle(source)}</div><div class="md">${detailHtml(source)}</div>` : ''}`;
+        ${source ? sourceHtml(source, !!sp.ex) : ''}`;
       return;
     }
     const fm = (state.fullSpec || sp).frontMatter || {};
@@ -1608,14 +1894,16 @@
     const dispName = skillDisplayName(s);
     const realPath = s.full || s.path || '';
     el.innerHTML = `
+      ${plainToggleHtml()}
       <h3>${esc(sp.title || dispName)}</h3>
       <div class="meta"><span class="badge ${sp.source === 'auto' ? '' : 'flow'}">${srcName}</span><span>${esc(groupName(s))}</span></div>
+      ${sp.ex ? exBlocks([['ex.skillWhat', sp.ex.what], ['ex.skillWhen', sp.ex.when], ['ex.skillResult', sp.ex.result]]) : ''}
       ${renderTestCaseCard(s, sp)}
       ${aiEntry(s)?.job?.spec?.ai?.noWorkflow ? `<p class="hint">${esc(t('ai.noWorkflow'))}</p>` : ''}
       ${state.fullSpec?.ai && state.fullSpec.source === 'ai' ? `<p class="hint">${esc(t('ai.evidence', state.fullSpec.ai.model))}</p><p class="hint">${esc(t('ai.verify', state.fullSpec.ai.verify.quoted, state.fullSpec.ai.verify.nodes))}${state.fullSpec.ai.verify.fallbackPhases.length ? '<br>' + esc(t('ai.fallback', state.fullSpec.ai.verify.fallbackPhases.join(' · '))) : ''}${state.fullSpec.ai.verify.truncatedPhases.length ? '<br>' + esc(t('ai.truncated', state.fullSpec.ai.verify.truncatedPhases.join(' · '))) : ''}</p>` : ''}
       ${phaseListHtml('flow', 'hier.phases')}
       ${phaseListHtml('side', 'hier.side')}
-      <div class="md"><p>${esc(listDesc(s) || sp.description || t('detail.noDesc'))}</p></div>
+      ${sp.ex ? '' : `<div class="md"><p>${esc(listDesc(s) || sp.description || t('detail.noDesc'))}</p></div>`}
       <div class="stats">
         <div class="stat"><b>${sp.lanes.length}</b><span>${t('detail.lanes')}</span></div>
         <div class="stat"><b>${sp.lanes.filter(l => l.kind === 'flow' || l.kind === 'bare').reduce((a, l) => a + l.nodes.length, 0)}</b><span>${t('detail.steps')}</span></div>
@@ -1623,21 +1911,39 @@
       </div>
       ${warnings.length ? `<div class="section-title">${t('detail.notes')}</div>${warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('')}` : ''}
       <div class="section-title">${t('detail.file')}</div>
-      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(dispName)}${s.name && dispName !== s.name ? ` <code class="path">${esc(s.name)}</code>` : ''}</dd><dt>${t('detail.path')}</dt><dd>${realPath ? `<code class="path">${esc(realPath)}</code>` : esc(t('detail.pasted'))}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(state.lang === 'zh' && Object.prototype.hasOwnProperty.call(ZH_FM_KEYS, k) ? ZH_FM_KEYS[k] : k)}</dt><dd>${esc(Array.isArray(fm[k]) ? fm[k].join(', ') : fm[k])}</dd>`).join('')}</dl>
+      <dl class="kv"><dt>${t('detail.name')}</dt><dd>${esc(dispName)}${s.name && dispName !== s.name ? ` <code class="path">${esc(s.name)}</code>` : ''}</dd><dt>${t('detail.path')}</dt><dd>${realPath ? `<code class="path">${esc(realPath)}</code>` : esc(t('detail.pasted'))}</dd>${s.url ? `<dt>${t('detail.source')}</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https:\/\/github\.com\//, ''))}</a></dd>` : ''}${s.alsoIn && s.alsoIn.length ? `<dt>${t('detail.alsoIn')}</dt><dd>${esc(s.alsoIn.map(whereName).join(t('list.sep')))}</dd>` : ''}${extra.map(k => `<dt>${esc(fmLabel(k))}${SV.i18n.has('fm.' + k) ? ` <code class="path fm-key">${esc(k)}</code>` : ''}</dt><dd>${esc(fmValue(fm[k]))}</dd>`).join('')}</dl>
       ${s.files && s.files.length ? `<div class="section-title">${t('detail.files', s.files.length)}</div><div class="files">${s.files.slice(0, 40).map(f => esc(f)).join('<br>')}${s.files.length > 40 ? '<br>…' : ''}</div>` : ''}
       <div class="section-title">${t('detail.howto')}</div>
       <div class="hint">${t('detail.howtoText')}</div>`;
   }
 
+  /* 面板里的讲解块：[[文案键, 内容, 样式]]，内容为空的不画 */
+  const code = text => esc(text).replace(/`([^`]+)`/g, '<code>$1</code>'); // 讲解里反引号包着的命令、文件名显示成代码样式
+  const exBlocks = list => {
+    const body = list.filter(x => x[1]).map(([key, text, cls]) => `<div class="ex-block ${cls || ''}"><div class="ex-label">${esc(t(key))}</div><p>${code(text)}</p></div>`).join('');
+    return body ? `<div class="ex-card">${body}<p class="ex-note">${esc(t('ex.note'))}</p></div>` : '';
+  };
+  /* 右侧面板顶部的开关：通俗讲解 / 原文措辞 */
+  function plainToggleHtml() {
+    if (!state.server || RECORD || EX.backend === false) return '';
+    const on = plainActive();
+    return `<div class="seg" role="group" aria-label="${esc(t('ex.mode'))}"><button type="button" data-plain="1" aria-pressed="${on}" title="${esc(t('ex.plainTip'))}">${esc(t('ex.plain'))}</button><button type="button" data-plain="0" aria-pressed="${!on}" title="${esc(t('ex.origTip'))}">${esc(t('ex.orig'))}</button></div>`;
+  }
+  /* 原文区。讲解模式下默认折起，点「看原文」才展开（不翻译，就是技能自己的措辞）；其余模式显示译文，可切到原文 */
+  function sourceHtml(md, explained) {
+    if (!explained) return `<div class="section-title">${t('detail.original')}${trToggle(md)}</div><div class="md">${detailHtml(md)}</div>`;
+    return `<div class="section-title">${t('detail.original')} <button class="link-btn" data-src="1" aria-expanded="${state.showSrc}">${t(state.showSrc ? 'ex.hideSrc' : 'ex.viewSrc')}</button></div>${state.showSrc ? `<div class="md">${mdHtml(md)}</div>` : ''}`;
+  }
   /* 详情原文：开着翻译时显示译文，没有就去要 */
   function detailNeedsTr(md) { return state.translate && needsTr(SV.md.strip(md).slice(0, 400), state.lang); }
   function trToggle(md) {
     if (!detailNeedsTr(md)) return '';
     return ` <button class="link-btn" data-orig="1">${state.showOrig ? t('tr.showTr') : t('tr.showOrig')}</button>`;
   }
+  // 只给行内代码路径加断点，代码块保留原文
+  const mdHtml = text => SV.md.toHtml(text).replace(/<pre\b[\s\S]*?<\/pre>|<code\b[^>]*>[\s\S]*?<\/code>/g, part => part.startsWith('<pre') ? part : part.replace(/>([^<]*)<\/code>/, (_, code) => '>' + code.replace(/\//g, '/<wbr>') + '</code>'));
   function detailHtml(md) {
-    // 只给行内代码路径加断点，代码块保留原文
-    const html = text => SV.md.toHtml(text).replace(/<pre\b[\s\S]*?<\/pre>|<code\b[^>]*>[\s\S]*?<\/code>/g, part => part.startsWith('<pre') ? part : part.replace(/>([^<]*)<\/code>/, (_, code) => '>' + code.replace(/\//g, '/<wbr>') + '</code>'));
+    const html = mdHtml;
     if (!detailNeedsTr(md) || state.showOrig) return html(md);
     const key = trKey(state.lang, md);
     const hit = TR.cache[key];
@@ -1693,7 +1999,7 @@
     if (allLevels && state.fullSpec) return standaloneAllHtml();
     const spec = cleanSpec(state.spec);
     const P = SV.render.THEMES[state.theme] || SV.render.THEMES.dark;
-    const mods = ['i18n', 'markdown', 'extract', ...(SV.mod.hier ? ['hier'] : []), 'layout', 'render'].map(k => `SV.mod.${k} = ${SV.mod[k].toString()};\nSV.mod.${k}(SV);`).join('\n').replace(/<\/script/gi, '<\\/script');
+    const mods = ['i18n', 'markdown', 'extract', ...(SV.mod.hier ? ['hier'] : []), ...(SV.mod.explain ? ['explain'] : []), 'layout', 'render'].map(k => `SV.mod.${k} = ${SV.mod[k].toString()};\nSV.mod.${k}(SV);`).join('\n').replace(/<\/script/gi, '<\\/script');
     const json = JSON.stringify(spec).replace(/</g, '\\u003c');
     return `<!doctype html>
 <html lang="${state.lang === 'zh' ? 'zh-CN' : 'en'}">
@@ -1758,6 +2064,17 @@ SV.i18n.set('${state.lang}');
   function standaloneAllHtml() {
     const full = translateSpec(state.fullSpec, state.lang).spec;
     const json = JSON.stringify(full).replace(/</g, '\\u003c');
+    // 已经整理好的讲解按层带进去（总览 + 各阶段），页面里重建层级后再套上
+    const bundle = {};
+    if (plainActive()) {
+      const put = (key, raw) => {
+        const hit = EX.results.get(exInfo(raw, state.lang).key);
+        if (hit) bundle[key] = { ex: { nodes: hit.nodes, labels: hit.labels, skill: hit.skill, phase: hit.phase }, ctx: exContext(raw) };
+      };
+      put('overview', state.hier.overview);
+      state.hier.phases.filter(p => p.drill).forEach(p => put(p.id, state.hier.detail(p.id)));
+    }
+    const bundleJson = JSON.stringify(bundle).replace(/</g, '\\u003c');
     const script = `(async function () {
   var full = ${json};
   if (document.fonts && document.fonts.load) {
@@ -1770,12 +2087,15 @@ SV.i18n.set('${state.lang}');
   }
   SV.layoutUtil.clearCache();
   var hier = SV.hier.build(full), query = new URLSearchParams(location.search), recording = query.has('record');
+  var bundle = ${bundleJson};
+  function explained(spec, key) { if (bundle[key]) SV.explain.apply(spec, bundle[key].ex, bundle[key].ctx); return spec; }
+  if (bundle.overview) hier.phases.forEach(function (p) { var n = bundle.overview.ex.nodes && bundle.overview.ex.nodes[p.id]; if (n && n.title) p.title = n.title; });
   var motion = recording ? (query.get('motion') === 'flat' || query.get('motion') === 'minimal' ? 'flat' : '3d') : '${state.motion}';
   var stage = document.getElementById('stage'), back = document.getElementById('back'), heading = document.getElementById('level'), card = document.getElementById('titleCard');
   // 视频与总览只走主流程的可展开阶段；参考资料与规则的详情排在最后，不进时间轴，从总览左下角的按钮进入
   var drills = hier.phases.filter(function (p) { return p.drill; });
   var mainDrills = drills.filter(function (p) { return p.kind === 'flow'; }), sideDrills = drills.filter(function (p) { return p.kind !== 'flow'; });
-  var levels = [hier.overview].concat(mainDrills.concat(sideDrills).map(function (p) { return hier.detail(p.id); }));
+  var levels = [explained(hier.overview, 'overview')].concat(mainDrills.concat(sideDrills).map(function (p) { return explained(hier.detail(p.id), p.id); }));
   // 没有主线的技能，总览里仍画参考卡片，它们和主线阶段一样进时间轴
   var onCanvas = hier.overview.lanes.some(function (l) { return l.kind === 'ref'; });
   var timed = 1 + mainDrills.length + (onCanvas ? sideDrills.length : 0), sideBox = document.getElementById('side');
@@ -1975,6 +2295,7 @@ SV.i18n.set('${state.lang}');
       if (item) select(item.dataset.id);
     });
     $('#search').addEventListener('input', e => { state.query = e.target.value; renderList(); });
+    $('#list').addEventListener('scroll', scheduleNames, { passive: true });
     // 回车：本机没搜到时直接去网上搜
     $('#search').addEventListener('keydown', e => {
       if (e.key !== 'Enter' || !state.server) return;
@@ -2009,9 +2330,16 @@ SV.i18n.set('${state.lang}');
       draw(true);
       renderHeader();
       renderDetail();
+      renderList();
       if (!state.translate) toast(t('tr.origToast'), 1500);
     };
-    $('#trStatus').onclick = () => { if (state.translate && !state.trInfo.busy && state.trInfo.missing) useTranslation(true); }; // 点状态条：重试没译出来的
+    // 点状态条：重试没译出来的、或没整理出来的讲解
+    $('#trStatus').onclick = () => {
+      if (!state.translate) return;
+      const ex = state.trInfo.ex === 'failed';
+      if (ex) { EX.failedAt.clear(); EX.downUntil = 0; }
+      if (ex || (!state.trInfo.busy && state.trInfo.missing)) useTranslation(true);
+    };
     $('#btnExitPresent').onclick = () => setPresent(false);
     $('#btnPanel').onclick = () => togglePanel();
 
@@ -2035,6 +2363,9 @@ SV.i18n.set('${state.lang}');
       const cp = e.target.closest('[data-copy-prompt]');
       if (cp) { copy(cp.dataset.copyPrompt); toast(t('tc.copied')); return; }
       if (e.target.closest('[data-orig]')) { state.showOrig = !state.showOrig; renderDetail(); return; }
+      if (e.target.closest('[data-src]')) { state.showSrc = !state.showSrc; renderDetail(); return; }
+      const plain = e.target.closest('[data-plain]');
+      if (plain) { setPlain(plain.dataset.plain === '1'); return; }
       const g = e.target.closest('[data-goto]');
       if (!g) return;
       if (g.dataset.goto) selectNode(g.dataset.goto); else { clearReads(); state.selected = null; markSelected(null); renderDetail(); }
@@ -2061,6 +2392,7 @@ SV.i18n.set('${state.lang}');
         trAbort('detail');
         state.selected = null;
         state.showOrig = false;
+        state.showSrc = false;
         state.zoom = 'fit';
         const full = mergeDetails(sp, state.fullSpec);
         setFullSpec(full);
@@ -2258,7 +2590,7 @@ SV.i18n.set('${state.lang}');
     } else showEmpty();
     watch();
     // 给自动化脚本用（录制、测试）
-    window.SVApp = { state, select, openPhase, exportHtml: standaloneHtml, setLang, TR };
+    window.SVApp = { state, select, selectNode, openPhase, exportHtml: standaloneHtml, setLang, TR, EX, translateSpec, exLookup, skillDisplayName };
     if (RECORD && state.spec) {
       await ensureFonts(state.spec, 8000);
       await new Promise(r => setTimeout(r, 300));

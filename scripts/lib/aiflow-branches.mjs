@@ -55,7 +55,14 @@ export function checkBranchContract(graph, text, expected = [], start = 1) {
   const byId = new Map(nodes.map(n => [n.id, n])), violations = [];
   const add = (n, rule, details = {}) => violations.push({ id: n?.id || null, line: n?.line, rule, ...details });
   for (const n of nodes.filter(n => n.type === 'decision')) {
-    const rows = decisionSource(n, text, start), source = rows.map(r => r.text).join('\n');
+    const rows = decisionSource(n, text, start);
+    // A coverage guard can lie outside the contiguous phase slice. Its accepted
+    // original text is evidence here too, just as in pass-2 quote verification.
+    if (!rows.length) {
+      const extra = expected.find(r => r.line === n.line && typeof r.text === 'string');
+      if (extra) rows.push({ line: extra.line, text: extra.text });
+    }
+    const source = rows.map(r => r.text).join('\n');
     const outgoing = edges.filter(e => e.from === n.id), stubs = exits.filter(e => e.from === n.id);
     const outcomes = [...outgoing, ...stubs];
     if (outcomes.length < 2) add(n, 'outcome-count', { actual: outcomes.length });
